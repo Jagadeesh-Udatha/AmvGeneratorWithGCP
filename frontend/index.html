@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Anime Edit Studio</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600;9..40,700&family=Unbounded:wght@700;800;900&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<style>
+:root{--bg:#09090b;--bg2:#0f0f13;--surface:#131318;--surface2:#1a1a22;--border:#1f1f2a;--border2:#2a2a3a;--borderH:#3a3a50;--accent:#8b5cf6;--accent2:#a78bfa;--accentD:#6d28d9;--glow:rgba(139,92,246,.3);--glowS:rgba(139,92,246,.12);--pink:#ec4899;--cyan:#22d3ee;--green:#34d399;--amber:#fbbf24;--red:#f87171;--orange:#fb923c;--text:#f0eff4;--text2:#8886a0;--text3:#4e4c64;--r:10px;--r2:14px}
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--text);font-family:'DM Sans',system-ui,sans-serif;min-height:100vh;overflow-x:hidden}
+body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;background:radial-gradient(ellipse 60% 35% at 15% -5%,rgba(139,92,246,.1),transparent 55%),radial-gradient(ellipse 50% 30% at 85% 105%,rgba(236,72,153,.06),transparent 50%)}
+::-webkit-scrollbar{width:5px;height:5px}::-webkit-scrollbar-thumb{background:var(--accent);border-radius:3px}::-webkit-scrollbar-track{background:var(--bg2)}
+.logo{font-family:'Unbounded',sans-serif;font-weight:900;font-size:clamp(22px,3.5vw,36px);letter-spacing:-1.5px;background:linear-gradient(135deg,#fff 20%,var(--accent2) 55%,var(--pink) 90%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.sub{color:var(--text2);font-size:12px;margin-top:4px;font-weight:400}
+.app{max-width:1440px;margin:0 auto;padding:20px 24px;position:relative;z-index:1}
+.header{text-align:center;padding:28px 0 20px}
+.tabs{display:flex;gap:3px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r2);padding:3px;max-width:500px;margin:16px auto 0}
+.tab{flex:1;padding:8px 12px;border:none;border-radius:var(--r);background:transparent;color:var(--text2);font-family:'DM Sans';font-size:12px;font-weight:600;cursor:pointer;transition:all .2s;display:flex;align-items:center;justify-content:center;gap:5px}
+.tab.on{background:var(--accent);color:#fff;box-shadow:0 2px 16px var(--glow)}.tab:not(.on):hover{color:var(--text);background:var(--surface2)}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r2);padding:16px;margin-bottom:12px}
+.clabel{font-size:9px;font-weight:700;letter-spacing:1.8px;text-transform:uppercase;color:var(--accent2);margin-bottom:12px;display:flex;align-items:center;gap:8px}.clabel::after{content:'';flex:1;height:1px;background:var(--border)}
+.field{margin-bottom:10px}
+.lbl{display:block;font-size:9px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.7px;margin-bottom:4px}
+.inp,.sel,.ta{width:100%;padding:8px 11px;background:var(--bg2);border:1px solid var(--border);border-radius:7px;color:var(--text);font-family:'DM Sans';font-size:12px;outline:none;transition:border .15s;appearance:none}
+.inp:focus,.sel:focus,.ta:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--glowS)}
+.ta{resize:vertical;min-height:60px;line-height:1.6}
+.sel{cursor:pointer;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' fill='%238886a0' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10z'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center;padding-right:26px}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.chk{display:flex;align-items:center;gap:7px;cursor:pointer;margin-bottom:5px}.chk input{width:14px;height:14px;accent-color:var(--accent)}.chk span{font-size:11px;color:var(--text2)}
+.btn{width:100%;padding:11px 16px;border:none;border-radius:8px;font-family:'DM Sans';font-size:12px;font-weight:700;cursor:pointer;transition:all .2s;letter-spacing:.3px}
+.btn-p{background:var(--accent);color:#fff;box-shadow:0 4px 20px var(--glow)}.btn-p:hover:not(:disabled){background:var(--accentD);transform:translateY(-1px)}.btn-p:disabled{opacity:.35;cursor:not-allowed;transform:none}
+.btn-g{background:var(--green);color:#000;font-weight:700}.btn-g:hover:not(:disabled){filter:brightness(1.1);transform:translateY(-1px)}.btn-g:disabled{opacity:.35;cursor:not-allowed}
+.btn-s{width:auto;padding:5px 10px;background:var(--surface2);border:1px solid var(--border2);color:var(--text2);font-family:'DM Sans';font-size:10px;font-weight:600;border-radius:6px;cursor:pointer;transition:all .15s}.btn-s:hover{border-color:var(--accent);color:var(--accent2)}
+.dropzone{border:2px dashed var(--border2);border-radius:9px;padding:20px 14px;text-align:center;cursor:pointer;transition:all .2s;position:relative}.dropzone:hover{border-color:var(--accent);background:rgba(139,92,246,.03)}
+.dropzone input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%}
+.dz-icon{font-size:22px;margin-bottom:5px}.dz-title{font-size:11px;font-weight:600;color:var(--text2)}.dz-sub{font-size:9px;color:var(--text3);margin-top:2px}
+.mgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(64px,1fr));gap:5px;margin-top:8px}
+.mthumb{aspect-ratio:9/16;border-radius:5px;overflow:hidden;border:2px solid var(--border);position:relative;cursor:pointer;transition:border .15s}.mthumb:hover{border-color:var(--accent2)}.mthumb img,.mthumb video{width:100%;height:100%;object-fit:cover}
+.mthumb .rm{position:absolute;top:2px;right:2px;width:15px;height:15px;background:rgba(0,0,0,.85);border:none;border-radius:50%;cursor:pointer;color:#fff;font-size:8px;display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity .15s}.mthumb:hover .rm{opacity:1}
+.mthumb .num{position:absolute;top:2px;left:2px;background:var(--accent);color:#fff;font-size:7px;font-weight:700;width:14px;height:14px;border-radius:50%;display:flex;align-items:center;justify-content:center}
+.mthumb .vbadge{position:absolute;bottom:2px;left:2px;background:rgba(0,0,0,.75);color:var(--cyan);font-size:7px;font-weight:700;padding:1px 3px;border-radius:2px}
+.pbg{height:4px;background:var(--bg2);border-radius:2px;overflow:hidden;margin:8px 0}.pfill{height:100%;border-radius:2px;background:linear-gradient(90deg,var(--accent),var(--pink));transition:width .4s ease}
+.steprow{display:flex;align-items:center;gap:6px;font-size:10px;color:var(--text3);margin:3px 0}.steprow.active{color:var(--accent2);font-weight:600}.steprow.done{color:var(--green)}
+.vwrap{background:#000;border-radius:var(--r2);overflow:hidden;border:1px solid var(--border)}.vwrap video{width:100%;display:block;max-height:460px;object-fit:contain}
+.vmeta{padding:10px 14px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;background:var(--surface)}
+.vtags{display:flex;gap:4px;flex-wrap:wrap}.vtag{font-size:9px;font-weight:700;padding:2px 7px;border-radius:4px}
+.dl{padding:6px 14px;background:var(--green);color:#000;border:none;border-radius:5px;font-weight:700;font-size:11px;cursor:pointer;text-decoration:none;display:inline-block}
+.err{background:rgba(248,113,113,.06);border:1px solid rgba(248,113,113,.18);border-radius:7px;padding:10px 12px;margin-top:10px;font-size:11px;color:#fca5a5;display:flex;gap:6px;align-items:flex-start}
+.warnbox{font-size:10px;color:var(--amber);margin-top:7px;padding:7px 10px;background:rgba(251,191,36,.06);border-radius:5px;border:1px solid rgba(251,191,36,.15);line-height:1.6}
+code{background:var(--bg2);padding:1px 4px;border-radius:3px;font-size:9px;color:var(--cyan)}
+.srow{display:flex;justify-content:space-between;align-items:center;margin-bottom:5px}.slbl{font-size:10px;color:var(--text2)}
+.sbadge{display:inline-flex;align-items:center;gap:4px;font-size:8px;font-weight:700;padding:2px 6px;border-radius:8px}.sbadge::before{content:'●';font-size:4px}
+.sok{background:rgba(52,211,153,.1);color:var(--green)}.serr{background:rgba(248,113,113,.1);color:var(--red)}.swarn{background:rgba(251,191,36,.1);color:var(--amber)}
+.hitem{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border)}.hitem:last-child{border:none}
+.hname{font-size:10px;color:var(--text2);font-weight:500}.hdate{font-size:8px;color:var(--text3);margin-top:1px}
+.pbtn{padding:3px 8px;background:var(--surface2);border:1px solid var(--border2);color:var(--text2);border-radius:4px;font-size:8px;cursor:pointer;font-family:'DM Sans';font-weight:700}.pbtn:hover{border-color:var(--accent);color:var(--accent2)}
+.chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}.chip{padding:3px 9px;background:var(--surface2);border:1px solid var(--border2);border-radius:16px;font-size:10px;color:var(--text2);cursor:pointer;transition:all .15s}.chip:hover{border-color:var(--accent);color:var(--accent2)}
+.gen-layout{display:grid;grid-template-columns:360px 1fr 280px;gap:14px;align-items:start;margin-top:18px}
+.gen-layout>div:first-child,.gen-layout>div:last-child{max-height:calc(100vh - 130px);overflow-y:auto;scrollbar-width:thin}
+@media(max-width:1100px){.gen-layout{grid-template-columns:1fr}}
+.slider-wrap{display:flex;align-items:center;gap:7px}.slider{flex:1;-webkit-appearance:none;height:3px;border-radius:2px;background:var(--border2);outline:none;cursor:pointer}.slider::-webkit-slider-thumb{-webkit-appearance:none;width:13px;height:13px;border-radius:50%;background:var(--accent);cursor:pointer}.slider-val{font-size:10px;font-weight:700;color:var(--accent2);min-width:24px;text-align:right}
+.wv{background:var(--bg2);border:1px solid var(--border);border-radius:7px;padding:7px;margin-top:7px}
+canvas.wavecanvas{width:100%;height:50px;display:block}
+.scene-progress-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(38px,1fr));gap:4px;margin-top:8px}
+.spg-cell{aspect-ratio:9/16;border-radius:5px;border:1px solid var(--border);overflow:hidden;position:relative;background:var(--bg2)}.spg-cell.done{border-color:var(--green)}.spg-cell.active{border-color:var(--accent);animation:cellpulse 1s ease infinite}.spg-cell img{width:100%;height:100%;object-fit:cover}.spg-num{position:absolute;bottom:1px;left:0;right:0;text-align:center;font-size:7px;font-weight:700;color:var(--text3)}.spg-num.done{color:var(--green)}
+.effect-grid{display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-top:6px}
+.effect-chip{padding:6px 7px;background:var(--bg2);border:1px solid var(--border2);border-radius:7px;font-size:9px;font-weight:600;cursor:pointer;transition:all .15s;text-align:center;color:var(--text2)}.effect-chip:hover{border-color:var(--accent);color:var(--accent2)}.effect-chip.selected{background:rgba(139,92,246,.12);border-color:var(--accent);color:var(--accent2)}.effect-chip.ai-pick{border-color:rgba(52,211,153,.3);color:var(--green)}.effect-chip.ai-pick.selected{background:rgba(52,211,153,.08)}.effect-chip:disabled{opacity:.4;cursor:not-allowed}
+.comp-card{background:var(--bg2);border:1px solid var(--border2);border-radius:10px;padding:10px;cursor:pointer;transition:all .15s;position:relative}.comp-card:hover{border-color:var(--accent);background:rgba(139,92,246,.05)}.comp-card.selected{border-color:var(--accent);background:rgba(139,92,246,.10)}.comp-card-name{font-size:10px;font-weight:700;color:var(--text);margin-bottom:2px}.comp-card-cat{font-size:8px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px}.comp-card-badge{position:absolute;top:6px;right:6px;font-size:7px;font-weight:700;padding:1px 5px;border-radius:8px}
+.comp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:6px;margin-top:6px}
+.editor-back{display:flex;align-items:center;gap:6px;padding:6px 14px;background:var(--surface2);border:1px solid var(--border2);border-radius:8px;color:var(--text2);font-size:11px;font-weight:600;cursor:pointer;transition:all .15s;font-family:'DM Sans'}.editor-back:hover{border-color:var(--accent);color:var(--accent2)}
+.tl-bpm{font-size:10px;font-weight:700;color:var(--accent2);background:var(--glowS);padding:2px 8px;border-radius:10px}
+.mkcard{background:var(--bg2);border:1px solid var(--border2);border-radius:10px;padding:11px;transition:border .15s}.mkcard:hover{border-color:var(--borderH)}.mkcard-name{font-size:11px;font-weight:700;color:var(--text);margin-bottom:2px}.mkcard-desc{font-size:9px;color:var(--text3);line-height:1.5;margin:3px 0}
+.vote-btn{background:none;border:1px solid var(--border2);border-radius:5px;color:var(--text3);font-size:9px;padding:2px 8px;cursor:pointer;font-family:'DM Sans';transition:all .15s}.vote-btn:hover{border-color:var(--accent);color:var(--accent2)}
+.cat-tabs{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:10px}.cat-tab{padding:3px 10px;border:1px solid var(--border2);border-radius:20px;font-size:9px;font-weight:600;cursor:pointer;color:var(--text3);background:none;font-family:'DM Sans';transition:all .15s}.cat-tab.on{background:var(--accent);border-color:var(--accent);color:#fff}.cat-tab:hover:not(.on){border-color:var(--accent);color:var(--accent2)}
+.plan-scenes{display:flex;flex-direction:column;gap:7px;margin-top:8px}.plan-scene{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:9px 11px}.plan-scene-header{display:flex;align-items:center;gap:8px;margin-bottom:5px}.plan-scene-num{font-size:9px;font-weight:700;color:var(--accent2);min-width:18px}.plan-inp{width:100%;padding:5px 8px;background:var(--surface);border:1px solid var(--border2);border-radius:5px;color:var(--text);font-size:10px;font-family:'DM Sans';outline:none}.plan-inp:focus{border-color:var(--accent)}.plan-ta{resize:none;min-height:38px;line-height:1.5}
+.audio-bar{display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--surface);border:1px solid var(--border);border-radius:10px;margin-bottom:10px}
+.audio-bar button{background:var(--accent);border:none;color:#fff;width:28px;height:28px;border-radius:50%;cursor:pointer;font-size:12px;display:flex;align-items:center;justify-content:center;flex-shrink:0}.audio-bar button:hover{background:var(--accentD)}
+.audio-bar .audio-time{font-size:10px;color:var(--text3);font-weight:600;min-width:70px;text-align:center}
+.audio-bar .audio-seek{flex:1;-webkit-appearance:none;height:3px;border-radius:2px;background:var(--border2);outline:none;cursor:pointer}.audio-bar .audio-seek::-webkit-slider-thumb{-webkit-appearance:none;width:11px;height:11px;border-radius:50%;background:var(--pink);cursor:pointer}
+.audio-bar .audio-vol{width:60px;-webkit-appearance:none;height:3px;border-radius:2px;background:var(--border2);outline:none;cursor:pointer}.audio-bar .audio-vol::-webkit-slider-thumb{-webkit-appearance:none;width:9px;height:9px;border-radius:50%;background:var(--accent);cursor:pointer}
+@keyframes spin{to{transform:rotate(360deg)}}@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}@keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}@keyframes cellpulse{0%,100%{box-shadow:0 0 0 0 rgba(139,92,246,.4)}50%{box-shadow:0 0 0 4px rgba(139,92,246,0)}}@keyframes genPulse{0%,100%{box-shadow:0 0 30px rgba(139,92,246,.3)}50%{box-shadow:0 0 60px rgba(236,72,153,.3)}}
+.spinning{animation:spin 1s linear infinite;display:inline-block}.pulsing{animation:pulse 1.5s ease-in-out infinite}.fade-in{animation:fadeIn .3s ease}.gen-pulse{animation:genPulse 2s ease-in-out infinite}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const {useState,useEffect,useRef,useCallback,useMemo}=React;
+const API="http://localhost:4000";
+const EMOTION_META={hype:{color:"#f87171",icon:"⚡",label:"Hype"},triumphant:{color:"#fbbf24",icon:"🏆",label:"Epic"},sad:{color:"#60a5fa",icon:"💙",label:"Sad"},romantic:{color:"#f472b6",icon:"💗",label:"Romantic"},neutral:{color:"#a78bfa",icon:"✦",label:"Neutral"}};
+const COMP_CATEGORIES={all:{label:"All",compositions:[]},panels:{label:"Panels",compositions:["three_panel","manga_panels","quad_grid","diagonal_split"]},reveals:{label:"Reveals",compositions:["character_reveal","vertical_wipe","slide_in_left","slide_in_right","slide_in_top","curtain_open"]},focus:{label:"Focus",compositions:["spotlight_zoom","parallax","rack_focus"]},impact:{label:"Impact",compositions:["impact_frame","bounce_zoom","zoom_burst","shockwave"]},cinematic:{label:"Cinematic",compositions:["letterbox_pan","tilt_reveal","mirror_composite","neon_frame","vhs_composite"]}};
+const COMP_DESCRIPTIONS={three_panel:"3 vertical strips",manga_panels:"2-panel manga split",quad_grid:"2×2 grid zooms",diagonal_split:"Diagonal depth offset",character_reveal:"Tight zoom → full frame",vertical_wipe:"Top-down reveal",slide_in_left:"Slides from left",slide_in_right:"Slides from right",slide_in_top:"Drops from top",curtain_open:"Curtains open",spotlight_zoom:"Center over blur bg",parallax:"Fake depth layers",rack_focus:"BG blur → fg sharp",impact_frame:"Flash → snap zoom",bounce_zoom:"Elastic overshoot",zoom_burst:"Rapid pull-back",shockwave:"Radial pulse out",letterbox_pan:"Cinematic bars + pan",tilt_reveal:"Camera tilt-up",mirror_composite:"Mirror + fade",neon_frame:"Animated neon border",vhs_composite:"VHS tracking look"};
+const DEFAULT_EFFECTS=["zoom_pulse","zoom_punch","zoom_punch_out","zoom_in","zoom_out","ken_burns","ken_burns_fast","ken_burns_slow","pan_left","pan_right","drift_left","drift_right","breathe","breathe_fast","breathe_slow","shake_horizontal","shake_vertical","spin_cw","spin_ccw","tilt_shift","glitch_horizontal","glitch_flash","vhs_shake","speed_ramp_in","speed_ramp_out","freeze_punch","echo_trail","static"];
+const DEFAULT_TRANSITIONS=["flash_white","flash_black","strobe_cut","zoom_blur_in","zoom_blur_out","cross_zoom","whip_pan_left","whip_pan_right","push_left","push_right","wipe_down","slice_left","slice_right","dissolve","dissolve_fast","dissolve_slow","dissolve_glow","fadeblack","fadeblack_fast","fadeblack_slow","fadewhite","glitch_cut","pixelize","ripple","film_burn"];
+const DEFAULT_GRADES=["none","cinematic","teal_orange","anime_bright","hype_red","hype_blue","hype_green","hype_purple","neon","sad_blue","sad_grey","romantic_warm","romantic_soft","triumphant_gold","sunset_gold","horror_red","cold_steel","vintage","manga"];
+const DEFAULT_OVERLAYS=["vignette","vignette_strong","film_grain","film_grain_heavy","scanlines","scanlines_strong","lens_flare","speed_lines","chromatic_aberration","chromatic_strong","particles","rain","snow","dirt_overlay","glow_soft","halftone"];
+const GEN_STEPS=[{id:"beats",l:"Analyzing beats + emotions",i:"🎵"},{id:"llm",l:"AI editor compositing decisions",i:"🤖"},{id:"render",l:"Rendering scenes with effects",i:"⚡"}];
+const PROMPTS=["Itachi's sacrifice — the truth behind the massacre","Top 5 anime fights that broke the internet","Attack on Titan — why it changed anime forever","The saddest anime deaths of all time"];
+function fmtTime(s){const m=Math.floor(s/60),sec=Math.floor(s%60);return m+":"+String(sec).padStart(2,'0');}
+
+function WaveformPreview({energy,beats,drops,dropEmotions,duration,bpm}){
+  const ref=useRef(null);
+  useEffect(()=>{const c=ref.current;if(!c||!energy?.length)return;const dpr=window.devicePixelRatio||1;c.width=c.offsetWidth*dpr;c.height=50*dpr;const ctx=c.getContext("2d"),W=c.width,H=c.height;ctx.clearRect(0,0,W,H);const bw=W/energy.length;energy.forEach((e,i)=>{const bh=e*H*.85,x=i*bw;const g=ctx.createLinearGradient(0,H-bh,0,H);g.addColorStop(0,"rgba(167,139,250,"+(0.3+e*0.7)+")");g.addColorStop(1,"rgba(139,92,246,.08)");ctx.fillStyle=g;ctx.fillRect(x+1,H-bh,bw-2,bh);});if(drops?.length&&duration)drops.forEach((t,i)=>{const emo=(dropEmotions&&dropEmotions[i])||"neutral";const col=(EMOTION_META[emo]||EMOTION_META.neutral).color;const x=(t/duration)*W;ctx.strokeStyle=col;ctx.lineWidth=dpr*1.5;ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();});},[energy,beats,drops,dropEmotions,duration]);
+  return(<div className="wv"><canvas className="wavecanvas" ref={ref}/>{bpm>0&&<div style={{marginTop:4,display:'flex',gap:8,alignItems:'center'}}><span style={{fontSize:10,fontWeight:700,color:'var(--accent2)',background:'var(--glowS)',padding:'2px 7px',borderRadius:5}}>🥁 {bpm} BPM</span><span style={{fontSize:9,color:'var(--text3)'}}>Drops: <b style={{color:'var(--text)'}}>{drops?.length||0}</b></span></div>}</div>);
+}
+
+function SSEProgress({jobId,onReady}){
+  const [pct,setPct]=useState(2);const [label,setLabel]=useState("Starting analysis...");const [scenesDone,setScenesDone]=useState(0);const [totalScenes,setTotalScenes]=useState(0);const [sceneThumbs,setSceneThumbs]=useState({});const [done,setDone]=useState(false);const [failed,setFailed]=useState(null);
+  useEffect(()=>{if(!jobId)return;const es=new EventSource(API+"/api/amv/jobs/"+jobId+"/progress");es.onmessage=(e)=>{try{const d=JSON.parse(e.data);if(d.pct!==undefined)setPct(d.pct);if(d.label)setLabel(d.label);if(d.scenesDone!==undefined)setScenesDone(d.scenesDone);if(d.totalScenes!==undefined&&d.totalScenes>0)setTotalScenes(d.totalScenes);if(d.sceneResult?.thumbUrl)setSceneThumbs(t=>({...t,[d.scenesDone-1]:API+d.sceneResult.thumbUrl}));if(d.done){setDone(true);es.close();if(d.error){setFailed(d.error);return;}fetch(API+"/api/amv/jobs/"+jobId).then(r=>r.json()).then(data=>{if(data.session)onReady(data.session);else fetch(API+"/api/amv/session/"+(data.job?.result?.sessionId||"")).then(r=>r.json()).then(sd=>{if(sd.session)onReady(sd.session);});}).catch(()=>{});}}catch{}};es.onerror=()=>{es.close();};return()=>{es.close();};},[jobId]);
+  if(failed)return(<div className="err fade-in"><span>❌</span><div>{failed}</div></div>);
+  return(<div className="card fade-in"><div className="clabel">⏳ {done?"Ready!":"AI Editor — Rendering Scenes"}</div><div className="pbg"><div className="pfill" style={{width:pct+"%"}}/></div><div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}><span style={{fontSize:10,color:'var(--text2)'}}>{label}</span><span style={{fontSize:10,fontWeight:700,color:'var(--accent2)'}}>{pct}%</span></div>{totalScenes>0&&(<><div style={{fontSize:9,color:'var(--text3)',marginBottom:4}}>{scenesDone}/{totalScenes} scenes rendered</div><div className="scene-progress-grid">{Array.from({length:totalScenes},(_,i)=>(<div key={i} className={"spg-cell"+(i<scenesDone?" done":i===scenesDone?" active":"")}>{sceneThumbs[i]&&<img src={sceneThumbs[i]} alt=""/>}<div className={"spg-num"+(i<scenesDone?" done":"")}>{i+1}</div></div>))}</div></>)}{done&&<div style={{marginTop:8,fontSize:11,color:'var(--green)',fontWeight:700,textAlign:'center'}}>✅ All scenes ready!</div>}</div>);
+}
+
+function CompositionPicker({value,onChange,disabled}){
+  const [cat,setCat]=useState("all");const allComps=["none",...Object.values(COMP_CATEGORIES).filter(c=>c.compositions.length).flatMap(c=>c.compositions)].filter((v,i,a)=>a.indexOf(v)===i);const filtered=cat==="all"?allComps:["none",...(COMP_CATEGORIES[cat]?.compositions||[])];
+  return(<div><div className="cat-tabs">{Object.entries(COMP_CATEGORIES).map(([k,v])=>(<button key={k} className={"cat-tab"+(cat===k?" on":"")} onClick={()=>setCat(k)}>{v.label}</button>))}</div><div className="comp-grid">{filtered.map(c=>{const isNone=c==="none";const isSel=value===(isNone?null:c)||(isNone&&!value);return(<div key={c} className={"comp-card"+(isSel?" selected":"")} onClick={()=>!disabled&&onChange(isNone?null:c)} style={{opacity:disabled?.4:1,cursor:disabled?'not-allowed':'pointer'}}><div className="comp-card-name">{isNone?"Standard":c.replace(/_/g," ")}</div><div className="comp-card-cat">{isNone?"motion effect":(COMP_DESCRIPTIONS[c]||"")}</div>{isSel&&<div className="comp-card-badge" style={{background:'rgba(139,92,246,.15)',color:'var(--accent2)'}}>✓</div>}</div>);})}</div></div>);
+}
+
+function AudioPlayerBar({audioUrl,scenes,selIdx}){
+  const audioRef=useRef(null);const [playing,setPlaying]=useState(false);const [ct,setCT]=useState(0);const [dur,setDur]=useState(0);const [vol,setVol]=useState(0.8);
+  const stopTimerRef=useRef(null);
+  useEffect(()=>{const a=audioRef.current;if(!a)return;a.volume=vol;const onT=()=>setCT(a.currentTime);const onL=()=>setDur(a.duration||0);const onE=()=>setPlaying(false);a.addEventListener('timeupdate',onT);a.addEventListener('loadedmetadata',onL);a.addEventListener('ended',onE);return()=>{a.removeEventListener('timeupdate',onT);a.removeEventListener('loadedmetadata',onL);a.removeEventListener('ended',onE)};},[audioUrl]);
+  useEffect(()=>{const a=audioRef.current;if(a)a.volume=vol;},[vol]);
+  // Auto-play per scene: seek to start, play, stop at end
+  useEffect(()=>{
+    const a=audioRef.current;if(!a||!scenes[selIdx])return;
+    if(stopTimerRef.current)clearTimeout(stopTimerRef.current);
+    const sc=scenes[selIdx];const ss=sc.start||0;const sd=sc.duration||1;
+    a.currentTime=ss;
+    a.play().then(()=>{setPlaying(true);
+      stopTimerRef.current=setTimeout(()=>{a.pause();setPlaying(false);},sd*1000);
+    }).catch(()=>{});
+    return()=>{if(stopTimerRef.current)clearTimeout(stopTimerRef.current);};
+  },[selIdx]);
+  function togglePlay(){
+    const a=audioRef.current;if(!a)return;
+    if(stopTimerRef.current){clearTimeout(stopTimerRef.current);stopTimerRef.current=null;}
+    if(playing){a.pause();setPlaying(false);}
+    else{
+      const sc=scenes[selIdx]||{};const ss=sc.start||0;const sd=sc.duration||1;
+      a.currentTime=ss;
+      a.play().then(()=>{setPlaying(true);
+        stopTimerRef.current=setTimeout(()=>{a.pause();setPlaying(false);},sd*1000);
+      }).catch(()=>{});
+    }
+  }
+  if(!audioUrl)return null;
+  const sc=scenes[selIdx]||{};
+  return(<div className="audio-bar"><audio ref={audioRef} src={audioUrl} preload="metadata"/><button onClick={togglePlay}>{playing?"⏸":"▶"}</button><span style={{fontSize:9,color:'var(--accent2)',fontWeight:700}}>Scene {selIdx+1}</span><span className="audio-time">{fmtTime(sc.start||0)} — {fmtTime((sc.start||0)+(sc.duration||0))}</span><input type="range" className="audio-vol" min={0} max={1} step={0.05} value={vol} onChange={e=>setVol(parseFloat(e.target.value))}/><span style={{fontSize:9,color:'var(--text3)'}}>🔊</span></div>);
+}
+
+function TimelineEditor({sessionId,scenes:initScenes,totalDur,beatData,audioUrl,onBack,onExportDone,options}){
+  const [scenes,setScenes]=useState(initScenes);const [selIdx,setSelIdx]=useState(0);const [rerendering,setRR]=useState(null);const [exporting,setExporting]=useState(false);const [vidKey,setVidKey]=useState(0);const [transPreview,setTransPreview]=useState(null);const [propTab,setPropTab]=useState("composition");const [importing,setImporting]=useState(false);
+  const selected=scenes[selIdx]||null;const EFFECTS=options?.effects||DEFAULT_EFFECTS;const TRANSITIONS=options?.transitions||DEFAULT_TRANSITIONS;const GRADES=options?.color_grades||DEFAULT_GRADES;const OVERLAYS=options?.overlays||DEFAULT_OVERLAYS;
+  function selectScene(i){if(i<0||i>=scenes.length)return;setSelIdx(i);setVidKey(k=>k+1);setTransPreview(null);}
+  async function doRerender(updates){const idx=selIdx,s=scenes[idx];const body={effect:updates.effect??s.effect,transition:updates.transition??s.transition,colorGrade:updates.colorGrade??(s.colorGrade||"none"),overlays:updates.overlays??(s.overlays||[]),composition:updates.composition!==undefined?updates.composition:(s.composition||null)};setRR(idx);try{const r=await fetch(API+"/api/amv/scene/"+sessionId+"/"+idx+"/rerender",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});const d=await r.json();if(!r.ok||!d.success)throw new Error(d.error||"Rerender failed");setScenes(prev=>prev.map((sc,i)=>i!==idx?sc:{...sc,...body,previewUrl:d.scene.previewUrl,thumbUrl:d.scene.thumbUrl}));setVidKey(k=>k+1);}catch(e){alert("Rerender failed: "+e.message);}finally{setRR(null);}}
+  async function handleExport(){setExporting(true);try{const r=await fetch(API+"/api/amv/export/"+sessionId,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({total_duration:totalDur})});const d=await r.json();if(!r.ok||!d.success)throw new Error(d.error||"Export failed");onExportDone(d);}catch(e){alert("Export failed: "+e.message);}finally{setExporting(false);}}
+  async function previewTransitionFn(){if(selIdx<=0)return;setTransPreview({loading:true,url:null});try{const r=await fetch(API+"/api/amv/scene/"+sessionId+"/"+selIdx+"/preview-transition",{method:"POST",headers:{"Content-Type":"application/json"}});const d=await r.json();if(!r.ok||!d.success)throw new Error(d.error||"Preview failed");setTransPreview({loading:false,url:API+d.previewUrl});}catch(e){setTransPreview(null);alert("Transition preview failed: "+e.message);}}
+  async function exportPreset(){try{const r=await fetch(API+"/api/amv/preset/export/"+sessionId+"?name=My_Edit_Preset");const d=await r.json();if(!d.success)throw new Error("Export failed");const blob=new Blob([JSON.stringify(d.preset,null,2)],{type:"application/json"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download="edit_preset.json";a.click();URL.revokeObjectURL(url);}catch(e){alert("Preset export failed: "+e.message);}}
+  async function importPreset(e){const file=e.target.files[0];if(!file)return;setImporting(true);try{const text=await file.text();const preset=JSON.parse(text);const r=await fetch(API+"/api/amv/preset/import/"+sessionId,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({preset})});const d=await r.json();if(!d.success)throw new Error(d.error||"Import failed");const sr=await fetch(API+"/api/amv/session/"+sessionId);const sd=await sr.json();if(sd.session?.scenes)setScenes(sd.session.scenes);setVidKey(k=>k+1);alert("Preset applied to "+d.appliedScenes+" scenes!");}catch(e){alert("Preset import failed: "+e.message);}finally{setImporting(false);e.target.value="";}}
+  const previewSrc=selected?.previewUrl?API+selected.previewUrl+"?v="+vidKey:"";
+  const fullAudioUrl=audioUrl?(audioUrl.startsWith("http")?audioUrl:API+audioUrl):null;
+
+  return(
+    <div style={{display:'flex',flexDirection:'column',height:'calc(100vh - 70px)'}} className="fade-in">
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'6px 0 10px',gap:10,flexWrap:'wrap'}}>
+        <button className="editor-back" onClick={onBack}>← Back</button>
+        <div style={{display:'flex',alignItems:'center',gap:8}}>
+          <span style={{fontSize:11,color:'var(--text3)'}}>{scenes.length} scenes · {totalDur.toFixed(1)}s</span>
+          {beatData?.bpm&&<span className="tl-bpm">🥁 {beatData.bpm} BPM</span>}
+        </div>
+        <div style={{display:'flex',gap:6,alignItems:'center'}}>
+          <button className="btn-s" onClick={exportPreset} title="Export preset JSON">📤 Export Preset</button>
+          <label className="btn-s" style={{cursor:'pointer',position:'relative'}}>📥 {importing?"Importing...":"Import Preset"}<input type="file" accept=".json" onChange={importPreset} style={{position:'absolute',inset:0,opacity:0,cursor:'pointer'}}/></label>
+          <button className="btn btn-g" onClick={handleExport} disabled={exporting||rerendering!==null} style={{width:'auto',padding:'8px 20px',fontSize:12}}>{exporting?"⏳ Exporting...":"📦 Export Final Video"}</button>
+        </div>
+      </div>
+      <div style={{display:'flex',gap:12,flex:1,minHeight:0}}>
+        <div style={{width:180,flexShrink:0,overflowY:'auto',background:'var(--surface)',border:'1px solid var(--border)',borderRadius:'var(--r2)',padding:10}}>
+          <div className="clabel">📋 Scenes</div>
+          <div style={{display:'flex',flexDirection:'column',gap:3}}>
+            {scenes.map((sc,i)=>{const emo=EMOTION_META[sc.emotion]||EMOTION_META.neutral;const isSel=i===selIdx;return(
+              <button key={i} onClick={()=>selectScene(i)} style={{display:'flex',alignItems:'center',gap:5,padding:'7px 8px',background:isSel?emo.color+'20':'var(--bg2)',border:isSel?'2px solid '+emo.color:'1px solid var(--border)',borderRadius:7,cursor:'pointer',textAlign:'left',fontFamily:'DM Sans',transition:'all .12s',width:'100%'}}>
+                <span style={{fontSize:10,fontWeight:700,color:emo.color,minWidth:16}}>{i+1}</span>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:9,color:isSel?'#fff':'var(--text2)',fontWeight:isSel?600:400,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{sc.composition&&<span style={{color:'var(--cyan)'}}>🎬 </span>}{emo.icon} {emo.label}</div>
+                  <div style={{fontSize:7,color:'var(--text3)',marginTop:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{(sc.effect||'—').replace(/_/g,' ')} · {(sc.duration||0).toFixed(1)}s</div>
+                </div>
+                {rerendering===i&&<span className="spinning" style={{fontSize:9,color:'var(--amber)'}}>⟳</span>}
+              </button>);})}
+          </div>
+        </div>
+        <div style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',background:'#000',borderRadius:'var(--r2)',overflow:'hidden',position:'relative',border:'1px solid var(--border)'}}>
+          {previewSrc?(<video key={vidKey} src={previewSrc} controls autoPlay loop playsInline style={{maxWidth:'100%',maxHeight:'100%',objectFit:'contain'}}/>):(<div style={{color:'var(--text3)',fontSize:13}}>Select a scene to preview</div>)}
+          <div style={{position:'absolute',bottom:10,left:10,right:10,display:'flex',justifyContent:'space-between',pointerEvents:'none'}}>
+            <div style={{background:'rgba(0,0,0,.75)',padding:'4px 10px',borderRadius:8,fontSize:10,color:'#fff'}}>Scene {selIdx+1}/{scenes.length}{selected&&<span style={{color:'var(--text3)',marginLeft:6}}>{(selected.duration||0).toFixed(1)}s</span>}</div>
+            {rerendering!==null&&(<div style={{background:'rgba(251,191,36,.15)',padding:'4px 10px',borderRadius:8,fontSize:10,color:'var(--amber)',display:'flex',alignItems:'center',gap:4}}><span className="spinning">⟳</span> Re-rendering...</div>)}
+          </div>
+        </div>
+        <div style={{width:310,flexShrink:0,overflowY:'auto',background:'var(--surface)',border:'1px solid var(--border)',borderRadius:'var(--r2)',padding:14}}>
+          {selected?(<>
+            <div className="clabel">🎛 Scene {selIdx+1}</div>
+            <div style={{display:'flex',gap:8,alignItems:'center',marginBottom:10,padding:'6px 10px',background:'var(--bg2)',borderRadius:8}}>
+              <span style={{fontSize:14}}>{(EMOTION_META[selected.emotion]||EMOTION_META.neutral).icon}</span>
+              <div><div style={{fontSize:11,fontWeight:700,color:(EMOTION_META[selected.emotion]||EMOTION_META.neutral).color}}>{(EMOTION_META[selected.emotion]||EMOTION_META.neutral).label}</div><div style={{fontSize:9,color:'var(--text3)'}}>{(selected.start||0).toFixed(1)}s → {((selected.start||0)+(selected.duration||0)).toFixed(1)}s</div></div>
+            </div>
+            {selected.llmReasoning&&(<div style={{marginBottom:10,padding:'6px 10px',background:'rgba(139,92,246,.06)',borderRadius:8,border:'1px solid rgba(139,92,246,.15)',fontSize:9,color:'var(--accent2)',lineHeight:1.5}}><span style={{fontWeight:700}}>🤖 AI:</span> {selected.llmReasoning}</div>)}
+            <div style={{display:'flex',gap:2,marginBottom:12,flexWrap:'wrap'}}>
+              {[["composition","🎬"],["effect","✨"],["transition","↔"],["grade","🎨"],["overlays","🌀"]].map(([t,icon])=>(<button key={t} onClick={()=>setPropTab(t)} style={{flex:'0 0 auto',padding:'4px 9px',border:'1px solid var(--border2)',borderRadius:6,background:propTab===t?'var(--accent)':'none',color:propTab===t?'#fff':'var(--text3)',fontSize:9,fontWeight:700,cursor:'pointer',fontFamily:'DM Sans',transition:'all .15s'}}>{icon} {t.charAt(0).toUpperCase()+t.slice(1)}</button>))}
+            </div>
+            {propTab==="composition"&&(<div><div style={{fontSize:9,color:'var(--text3)',marginBottom:8,lineHeight:1.5}}>Cinematic multi-layer compositions.{selected.composition&&<span style={{color:'var(--cyan)'}}> Active: {selected.composition.replace(/_/g,' ')}</span>}</div><CompositionPicker value={selected.composition||null} onChange={c=>doRerender({composition:c})} disabled={rerendering!==null}/></div>)}
+            {propTab==="effect"&&(<div>{selected.composition&&(<div style={{fontSize:9,color:'var(--amber)',marginBottom:8,padding:'5px 8px',background:'rgba(251,191,36,.06)',borderRadius:6,border:'1px solid rgba(251,191,36,.15)'}}>⚠ Composition active — effect overridden.</div>)}<label className="lbl">Motion Effect</label><div className="effect-grid">{EFFECTS.map(ef=>(<button key={ef} className={"effect-chip"+(selected.effect===ef?" selected":"")} onClick={()=>doRerender({effect:ef})} disabled={rerendering!==null}>{ef.replace(/_/g," ")}</button>))}</div></div>)}
+            {propTab==="transition"&&(<div><label className="lbl">Transition out</label><select className="sel" value={selected.transition||"dissolve"} style={{fontSize:11,marginBottom:8}} onChange={e=>{setTransPreview(null);doRerender({transition:e.target.value})}} disabled={rerendering!==null}>{TRANSITIONS.map(tr=><option key={tr} value={tr}>{tr.replace(/_/g," ")}</option>)}</select>{selIdx>0&&(<button className="btn-s" onClick={previewTransitionFn} disabled={rerendering!==null||(transPreview&&transPreview.loading)} style={{width:'100%',textAlign:'center',padding:'7px 0',fontSize:10}}>{transPreview?.loading?"⏳ Rendering...":"🔀 Preview Transition"}</button>)}{transPreview?.url&&(<div style={{marginTop:8,borderRadius:8,overflow:'hidden',border:'1px solid var(--border)'}}><video src={transPreview.url} controls autoPlay loop muted playsInline style={{width:'100%',display:'block'}}/></div>)}</div>)}
+            {propTab==="grade"&&(<div><label className="lbl">Color Grade</label><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:4,marginTop:4}}>{GRADES.map(g=>(<button key={g} className={"effect-chip"+(selected.colorGrade===g?" selected":"")} style={{fontSize:9}} onClick={()=>doRerender({colorGrade:g})} disabled={rerendering!==null}>{g.replace(/_/g," ")||"none"}</button>))}</div></div>)}
+            {propTab==="overlays"&&(<div><label className="lbl">Overlays — click to toggle</label><div style={{display:'flex',flexWrap:'wrap',gap:5,marginTop:4}}>{OVERLAYS.map(ov=>{const active=(selected.overlays||[]).includes(ov);return(<button key={ov} className={"effect-chip"+(active?" selected":"")} style={{fontSize:9,padding:'4px 8px'}} disabled={rerendering!==null} onClick={()=>{const cur=selected.overlays||[];doRerender({overlays:active?cur.filter(o=>o!==ov):[...cur,ov]});}}>{ov.replace(/_/g," ")}</button>);})}</div></div>)}
+            {rerendering===selIdx&&(<div style={{marginTop:12,fontSize:11,color:'var(--amber)',display:'flex',alignItems:'center',gap:6,padding:'8px 10px',background:'rgba(251,191,36,.06)',borderRadius:8,border:'1px solid rgba(251,191,36,.15)'}}><span className="spinning" style={{fontSize:14}}>⟳</span> Re-rendering...</div>)}
+            <div style={{marginTop:14,display:'flex',gap:6}}><button className="btn-s" disabled={selIdx<=0||rerendering!==null} onClick={()=>selectScene(selIdx-1)} style={{flex:1,textAlign:'center',padding:'7px 0'}}>← Prev</button><button className="btn-s" disabled={selIdx>=scenes.length-1||rerendering!==null} onClick={()=>selectScene(selIdx+1)} style={{flex:1,textAlign:'center',padding:'7px 0'}}>Next →</button></div>
+            <div style={{marginTop:12,padding:'8px 10px',background:'var(--bg2)',borderRadius:8,fontSize:9,color:'var(--text3)',lineHeight:1.8}}><b style={{color:'var(--text2)'}}>Current:</b><br/>{selected.composition&&<>🎬 <span style={{color:'var(--cyan)'}}>{selected.composition.replace(/_/g,' ')}</span><br/></>}✨ {(selected.effect||'—').replace(/_/g,' ')}<br/>↔ {(selected.transition||'—').replace(/_/g,' ')}<br/>🎨 {(selected.colorGrade||'none').replace(/_/g,' ')}<br/>🌀 {(selected.overlays||[]).join(', ')||'none'}{selected.editSource==='llm'&&<><br/>🤖 AI advised</>}</div>
+          </>):(<div style={{color:'var(--text3)',fontSize:12,textAlign:'center',padding:30}}>Select a scene</div>)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MarketplaceTab(){
+  const [compositions,setCompositions]=useState([]);const [loading,setLoading]=useState(true);const [submitting,setSubmitting]=useState(false);const [showForm,setShowForm]=useState(false);const [form,setForm]=useState({name:'',slug:'',category:'cinematic',description:'',ffmpegTemplate:''});const [filterCat,setFilterCat]=useState("all");const [msg,setMsg]=useState(null);
+  useEffect(()=>{setLoading(true);fetch(API+"/api/amv/compositions").then(r=>r.json()).then(d=>{setCompositions(d.compositions||[]);setLoading(false);}).catch(()=>setLoading(false));},[]);
+  async function vote(id){const r=await fetch(API+"/api/amv/compositions/"+id+"/vote",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({})});const d=await r.json();if(d.voted)setCompositions(cs=>cs.map(c=>c.id===id?{...c,vote_count:c.vote_count+1}:c));setMsg(d.message||"Voted!");setTimeout(()=>setMsg(null),2000);}
+  async function submitComposition(){if(!form.name||!form.slug||!form.ffmpegTemplate)return;setSubmitting(true);try{const r=await fetch(API+"/api/amv/compositions",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(form)});const d=await r.json();if(!r.ok||!d.success)throw new Error(d.error||"Failed");setMsg("Submitted!");setShowForm(false);setForm({name:'',slug:'',category:'cinematic',description:'',ffmpegTemplate:''});}catch(e){setMsg("Error: "+e.message);}finally{setSubmitting(false);}}
+  const cats=["all","panels","reveals","focus","impact","cinematic","custom"];const filtered=filterCat==="all"?compositions:compositions.filter(c=>c.category===filterCat);
+  return(
+    <div style={{marginTop:18}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:14}}><div><div style={{fontSize:16,fontWeight:700}}>🎬 Composition Marketplace</div><div style={{fontSize:10,color:'var(--text3)',marginTop:2}}>DB-driven compositions</div></div><button className="btn-s" onClick={()=>setShowForm(f=>!f)} style={{padding:'8px 14px'}}>{showForm?"✕ Cancel":"+ Submit"}</button></div>
+      {msg&&<div style={{padding:'8px 12px',background:'rgba(52,211,153,.08)',border:'1px solid rgba(52,211,153,.2)',borderRadius:8,fontSize:11,color:'var(--green)',marginBottom:10}}>{msg}</div>}
+      {showForm&&(<div className="card" style={{marginBottom:16}}><div className="clabel">📝 Submit</div><div className="row2"><div className="field"><label className="lbl">Name</label><input className="inp" value={form.name} onChange={e=>setForm(f=>({...f,name:e.target.value}))}/></div><div className="field"><label className="lbl">Slug</label><input className="inp" value={form.slug} onChange={e=>setForm(f=>({...f,slug:e.target.value.toLowerCase().replace(/[^a-z0-9_]/g,'_')}))}/></div></div><div className="row2"><div className="field"><label className="lbl">Category</label><select className="sel" value={form.category} onChange={e=>setForm(f=>({...f,category:e.target.value}))}>{cats.filter(c=>c!=="all").map(c=><option key={c} value={c}>{c}</option>)}</select></div><div className="field"><label className="lbl">Description</label><input className="inp" value={form.description} onChange={e=>setForm(f=>({...f,description:e.target.value}))}/></div></div><div className="field"><label className="lbl">FFmpeg Template</label><textarea className="ta" rows={5} value={form.ffmpegTemplate} onChange={e=>setForm(f=>({...f,ffmpegTemplate:e.target.value}))}/></div><button className="btn btn-p" onClick={submitComposition} disabled={submitting||!form.name||!form.slug||!form.ffmpegTemplate}>{submitting?"⏳":"🚀 Submit"}</button></div>)}
+      <div className="cat-tabs">{cats.map(c=>(<button key={c} className={"cat-tab"+(filterCat===c?" on":"")} onClick={()=>setFilterCat(c)}>{c.charAt(0).toUpperCase()+c.slice(1)}</button>))}</div>
+      {loading?(<div style={{textAlign:'center',padding:40,color:'var(--text3)'}}><span className="spinning" style={{fontSize:20}}>⟳</span></div>):(
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(260px,1fr))',gap:10}}>{filtered.map(c=>(<div key={c.id} className="mkcard"><div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}><div><div className="mkcard-name">{c.name} {c.is_builtin?<span style={{fontSize:8,color:'var(--accent2)'}}>built-in</span>:<span style={{fontSize:8,color:'var(--green)'}}>community</span>}</div><div style={{fontSize:8,color:'var(--text3)',textTransform:'uppercase'}}>{c.category}</div></div><div style={{display:'flex',gap:5,alignItems:'center'}}><span style={{fontSize:9,color:'var(--text3)'}}>▲ {c.vote_count}</span>{!c.is_builtin&&<button className="vote-btn" onClick={()=>vote(c.id)}>Vote</button>}</div></div>{c.description&&<div className="mkcard-desc">{c.description}</div>}<div style={{marginTop:6,fontSize:8,color:'var(--text3)'}}>Used {c.use_count}x</div></div>))}{filtered.length===0&&<div style={{gridColumn:'1/-1',textAlign:'center',padding:30,color:'var(--text3)'}}>No compositions yet.</div>}</div>
+      )}
+    </div>
+  );
+}
+
+function App(){
+  const [tab,setTab]=useState("amv");const [health,setHealth]=useState(null);const [history,setHist]=useState([]);const [error,setErr]=useState(null);const [options,setOptions]=useState(null);
+  const [audioFile,setAF]=useState(null);const [mediaFiles,setMF]=useState([]);const [beatData,setBD]=useState(null);const [analyzing,setAna]=useState(false);const [sensitivity,setSens]=useState(0.5);const [ar,setAR]=useState("9:16");const [maxDur,setMaxDur]=useState(30);const [generating,setGen]=useState(false);const [genStep,setGStep]=useState(-1);const [genProg,setGProg]=useState(0);const [genResult,setGRes]=useState(null);const [classifierInfo,setClassInfo]=useState(null);const [dbStats,setDbStats]=useState(null);
+  const [currentJobId,setJobId]=useState(null);const [jobMode,setJobMode]=useState("idle");
+  const [editorMode,setEditor]=useState(false);const [sessionId,setSid]=useState(null);const [scenes,setScenes]=useState([]);const [totalDur,setTDur]=useState(30);const [audioUrl,setAudioUrl]=useState(null);
+  const [autoExporting,setAutoExporting]=useState(false);
+  const sessionReadyRef=useRef(false);
+  const [prompt,setPrompt]=useState("");const [aiDur,setAiDur]=useState(15);const [voice,setVoice]=useState("male_en");const [inclAudio,setIA]=useState(true);const [inclSubs,setIS]=useState(true);const [planning,setPlan]=useState(false);const [plan,setPlanData]=useState(null);const [aiGenerating,setAIG]=useState(false);const [aiStep,setAIStep]=useState(-1);const [aiProg,setAIProg]=useState(0);const [aiResult,setAIRes]=useState(null);
+
+  // BYOK API keys (stored in localStorage, never sent to DB)
+  const [showSettings,setShowSettings]=useState(false);
+  const [byokAnthropic,setByokAnthropic]=useState(()=>localStorage.getItem('byok_anthropic')||'');
+  const [byokGemini,setByokGemini]=useState(()=>localStorage.getItem('byok_gemini')||'');
+  const [byokOpenai,setByokOpenai]=useState(()=>localStorage.getItem('byok_openai')||'');
+  function saveByok(){localStorage.setItem('byok_anthropic',byokAnthropic);localStorage.setItem('byok_gemini',byokGemini);localStorage.setItem('byok_openai',byokOpenai);setShowSettings(false);}
+  const hasByok=!!(byokAnthropic||byokGemini||byokOpenai);
+  function getByokHeaders(){const h={};if(byokAnthropic)h['x-anthropic-key']=byokAnthropic;if(byokGemini)h['x-gemini-key']=byokGemini;if(byokOpenai)h['x-openai-key']=byokOpenai;return h;}
+
+  useEffect(()=>{fetch(API+"/health").then(r=>r.json()).then(setHealth).catch(()=>{});fetch(API+"/api/video/list").then(r=>r.json()).then(d=>setHist(d.videos||[])).catch(()=>{});fetch(API+"/api/amv/model-info").then(r=>r.json()).then(d=>setClassInfo(d.classifier)).catch(()=>{});fetch(API+"/api/amv/db-stats").then(r=>r.json()).then(d=>setDbStats(d.stats)).catch(()=>{});fetch(API+"/api/amv/options").then(r=>r.json()).then(setOptions).catch(()=>{});},[]);
+
+  async function uploadFiles(files){const fd=new FormData();files.forEach(f=>fd.append("files",f));const r=await fetch(API+"/api/amv/upload",{method:"POST",body:fd});const d=await r.json();if(!r.ok||!d.success)throw new Error(d.error||"Upload failed");return d.files;}
+  async function analyze(fp,s){setAna(true);try{const r=await fetch(API+"/api/amv/analyze",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({audio_path:fp,sensitivity:s})});setBD(await r.json());}catch(e){setBD({fallback:true,error:e.message})}finally{setAna(false)}}
+  const reanalyze=useCallback(()=>{if(audioFile)analyze(audioFile.path,sensitivity);},[audioFile,sensitivity]);
+  async function onAudioChange(e){const files=e.dataTransfer?[...e.dataTransfer.files]:[...e.target.files];if(!files.length)return;e.preventDefault();try{const up=await uploadFiles(files);const af=up.find(f=>f.type==="audio")||up[0];setAF(af);setBD(null);setGRes(null);setSid(null);setScenes([]);setJobId(null);setJobMode("idle");setAudioUrl(null);await analyze(af.path,sensitivity);}catch(err){setErr(err.message)}}
+  async function onMediaChange(e){const files=e.dataTransfer?[...e.dataTransfer.files]:[...e.target.files];if(!files.length)return;e.preventDefault();try{const up=await uploadFiles(files);setMF(p=>[...p,...up.filter(f=>f.type!=="audio")]);}catch(err){setErr(err.message)}}
+
+  async function handleGenerate(){
+    if(!audioFile||!mediaFiles.length)return;
+    setGen(true);setErr(null);setGRes(null);setGStep(0);setGProg(5);setJobId(null);setJobMode("analyzing");setEditor(false);setAutoExporting(false);sessionReadyRef.current=false;
+    try{const r=await fetch(API+"/api/amv/prepare",{method:"POST",headers:{"Content-Type":"application/json",...getByokHeaders()},body:JSON.stringify({audio_path:audioFile.path,media_paths:mediaFiles.map(f=>f.path),sensitivity,aspect_ratio:ar,max_duration:maxDur,async_mode:true})});
+    const d=await r.json();if(!r.ok||!d.success)throw new Error(d.error||"Generation failed");setGProg(30);setGStep(1);setJobId(d.jobId);setJobMode("rendering");if(d.scenes)setScenes(d.scenes);if(d.totalDuration)setTDur(d.totalDuration);setSid(d.sessionId);if(d.audioUrl)setAudioUrl(d.audioUrl);
+    }catch(e){setErr(e.message);setGProg(0);setGStep(-1);setJobMode("idle");}finally{setGen(false)}}
+
+  async function onSessionReady(session){
+    if(sessionReadyRef.current)return;
+    sessionReadyRef.current=true;
+    setJobMode("done");setJobId(null);
+    const sid=session.sessionId||sessionId;
+    setSid(sid);setScenes(session.scenes||scenes);
+    if(session.audioUrl)setAudioUrl(session.audioUrl);
+    const td=session.scenes?.length?session.scenes.reduce((s,sc)=>s+(sc.duration||0),0):totalDur;
+    setTDur(td);
+    setAutoExporting(true);
+    try{
+      const r=await fetch(API+"/api/amv/export/"+sid,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({total_duration:td})});
+      const d=await r.json();
+      if(r.ok&&d.success){setGRes({video:d.video,stats:{generationTime:d.exportTime,sceneCount:(session.scenes||scenes).length}});fetch(API+"/api/video/list").then(r=>r.json()).then(d=>setHist(d.videos||[])).catch(()=>{});}
+    }catch(e){console.warn("Auto-export failed:",e.message);}
+    finally{setAutoExporting(false);sessionReadyRef.current=false;}
+  }
+  const canGenerate=!!audioFile&&mediaFiles.length>0;const isWorking=generating||jobMode==="rendering"||jobMode==="analyzing";
+
+  async function fetchPlan(){if(!prompt.trim()||planning)return;setPlan(true);setPlanData(null);setErr(null);try{const r=await fetch(API+"/api/video/plan",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({prompt:prompt.trim(),duration:aiDur})});const d=await r.json();if(!r.ok||!d.success)throw new Error(d.error||"Planning failed");setPlanData(d.plan);}catch(e){setErr(e.message)}finally{setPlan(false)}}
+  async function generateAI(){if((!prompt.trim()&&!plan)||aiGenerating)return;setAIG(true);setErr(null);setAIRes(null);setAIStep(0);setAIProg(5);const iv=setInterval(()=>{setAIStep(p=>Math.min(p+1,4));setAIProg(p=>Math.min(88,p+12));},4000);try{const r=await fetch(API+"/api/video/generate",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({prompt:prompt.trim(),duration:aiDur,includeAudio:inclAudio,voice,subtitles:inclSubs,approved_plan:plan||null})});clearInterval(iv);const d=await r.json();if(!r.ok||!d.success)throw new Error(d.error||"Failed");setAIStep(5);setAIProg(100);setAIRes(d);fetch(API+"/api/video/list").then(r=>r.json()).then(d=>setHist(d.videos||[])).catch(()=>{});}catch(e){clearInterval(iv);setErr(e.message);setAIProg(0);setAIStep(-1)}finally{setAIG(false)}}
+  const emoSummary=useMemo(()=>{if(!beatData?.drop_emotions)return null;return beatData.drop_emotions.reduce((a,e)=>{a[e]=(a[e]||0)+1;return a},{});},[beatData]);
+
+  if(editorMode&&sessionId&&scenes.length){return(<div className="app"><TimelineEditor sessionId={sessionId} scenes={scenes} totalDur={totalDur} beatData={beatData} audioUrl={audioUrl} options={options} onBack={()=>setEditor(false)} onExportDone={(d)=>{setEditor(false);setGRes({video:d.video,stats:{generationTime:d.exportTime,sceneCount:scenes.length}});fetch(API+"/api/video/list").then(r=>r.json()).then(d=>setHist(d.videos||[])).catch(()=>{});}}/></div>);}
+
+  return(
+    <div className="app">
+      <header className="header">
+        <div style={{display:'flex',justifyContent:'center',alignItems:'center',gap:12}}>
+          <div className="logo">✦ Anime Edit Studio</div>
+          <button className="btn-s" onClick={()=>setShowSettings(s=>!s)} style={{padding:'4px 10px',fontSize:10}} title="API Key Settings">
+            ⚙️ {hasByok?'BYOK ✓':'Settings'}
+          </button>
+        </div>
+        <p className="sub">AI-powered AMV generator · Professional editor · Real-time render</p>
+
+        {showSettings&&(
+          <div className="card" style={{maxWidth:500,margin:'12px auto 0',textAlign:'left',background:'var(--surface)',border:'1px solid var(--accent)'}}>
+            <div className="clabel">🔑 AI API Keys (BYOK — your keys, your cost)</div>
+            <div style={{fontSize:10,color:'var(--text2)',marginBottom:12,lineHeight:1.6}}>
+              Keys are stored in your browser only. Never sent to any server database. Without keys, the smart classifier runs locally for free.
+            </div>
+            <div className="field">
+              <label className="lbl">Anthropic API Key (recommended)</label>
+              <input className="inp" type="password" value={byokAnthropic} onChange={e=>setByokAnthropic(e.target.value)} placeholder="sk-ant-api03-..." style={{fontSize:11}}/>
+            </div>
+            <div className="field">
+              <label className="lbl">Gemini API Key (free tier available)</label>
+              <input className="inp" type="password" value={byokGemini} onChange={e=>setByokGemini(e.target.value)} placeholder="AIza..." style={{fontSize:11}}/>
+            </div>
+            <div className="field">
+              <label className="lbl">OpenAI API Key (fallback)</label>
+              <input className="inp" type="password" value={byokOpenai} onChange={e=>setByokOpenai(e.target.value)} placeholder="sk-..." style={{fontSize:11}}/>
+            </div>
+            <div style={{display:'flex',gap:8}}>
+              <button className="btn btn-p" onClick={saveByok} style={{flex:1,fontSize:11}}>Save Keys</button>
+              <button className="btn-s" onClick={()=>{setByokAnthropic('');setByokGemini('');setByokOpenai('');localStorage.removeItem('byok_anthropic');localStorage.removeItem('byok_gemini');localStorage.removeItem('byok_openai');}} style={{padding:'8px 14px',fontSize:10}}>Clear All</button>
+            </div>
+            <div style={{marginTop:8,fontSize:9,color:'var(--text3)',lineHeight:1.6}}>
+              {hasByok
+                ?<span style={{color:'var(--green)'}}>✓ AI-enhanced editing enabled via your API key</span>
+                :<span>No keys set — using smart classifier (free, no API calls)</span>
+              }
+            </div>
+          </div>
+        )}
+
+        <div className="tabs">
+          <button className={"tab"+(tab==="amv"?" on":"")} onClick={()=>{setTab("amv");setErr(null)}}>🎵 AMV Studio</button>
+          <button className={"tab"+(tab==="ai"?" on":"")} onClick={()=>{setTab("ai");setErr(null)}}>🤖 AI Generator</button>
+          <button className={"tab"+(tab==="market"?" on":"")} onClick={()=>{setTab("market");setErr(null)}}>🎬 Marketplace</button>
+        </div>
+      </header>
+
+      {tab==="amv"&&(
+        <div className="gen-layout">
+          <div>
+            <div className="card"><div className="clabel">🎵 Music Track</div>
+              {!audioFile?(<div className="dropzone" onDragOver={e=>e.preventDefault()} onDrop={onAudioChange}><input type="file" accept=".mp3,.wav,.aac,.m4a,.ogg,.flac" onChange={onAudioChange}/><div className="dz-icon">🎧</div><div className="dz-title">Drop your music here</div><div className="dz-sub">MP3, WAV, AAC, FLAC</div></div>
+              ):(<div>
+                <div style={{display:'flex',alignItems:'center',gap:7,padding:'7px 10px',background:'var(--bg2)',borderRadius:7,border:'1px solid var(--border)'}}>
+                  <span style={{fontSize:16}}>🎵</span><div style={{flex:1,minWidth:0}}><div style={{fontSize:11,fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{audioFile.originalName}</div><div style={{fontSize:8,color:'var(--text3)',marginTop:1}}>{(audioFile.size/1024/1024).toFixed(1)} MB</div></div>
+                  <button className="btn-s" onClick={()=>{setAF(null);setBD(null);setGRes(null);setSid(null);setScenes([]);setJobId(null);setJobMode("idle");setAudioUrl(null)}}>✕</button>
+                </div>
+                <div style={{marginTop:8}}><label className="lbl">Beat Sensitivity</label><div className="slider-wrap"><span style={{fontSize:9,color:'var(--text3)'}}>Fewer</span><input type="range" className="slider" min={0} max={1} step={0.05} value={sensitivity} onChange={e=>setSens(parseFloat(e.target.value))} onMouseUp={reanalyze} onTouchEnd={reanalyze}/><span style={{fontSize:9,color:'var(--text3)'}}>More</span><span className="slider-val">{Math.round(sensitivity*100)}%</span></div></div>
+                {analyzing&&<div style={{fontSize:10,color:'var(--accent2)',marginTop:6,display:'flex',gap:4,alignItems:'center'}}><span className="spinning">⟳</span>Analyzing...</div>}
+                {beatData&&!beatData.fallback&&(<><WaveformPreview energy={beatData.energy_curve} beats={beatData.beats} drops={beatData.drops} dropEmotions={beatData.drop_emotions} duration={beatData.duration} bpm={beatData.bpm}/>{emoSummary&&(<div style={{display:'flex',gap:4,flexWrap:'wrap',marginTop:6}}>{Object.entries(emoSummary).map(([emo,cnt])=>{const m=EMOTION_META[emo]||EMOTION_META.neutral;return <span key={emo} style={{display:'inline-flex',alignItems:'center',gap:3,padding:'2px 6px',borderRadius:8,fontSize:8,fontWeight:700,background:m.color+'18',color:m.color,border:'1px solid '+m.color+'33'}}>{m.icon} {m.label} ×{cnt}</span>;})}</div>)}</>)}
+                {beatData?.fallback&&<div className="warnbox">⚠ Beat detector offline<br/><code>python3 beat_detector.py</code></div>}
+              </div>)}
+            </div>
+            <div className="card"><div className="clabel">🖼️ Media Files</div>
+              <div className="dropzone" onDragOver={e=>e.preventDefault()} onDrop={onMediaChange}><input type="file" accept=".jpg,.jpeg,.png,.webp,.mp4,.mov" multiple onChange={onMediaChange}/><div className="dz-icon">📂</div><div className="dz-title">Photos or video clips</div><div className="dz-sub">JPG, PNG, MP4</div></div>
+              {mediaFiles.length>0&&(<div className="mgrid" style={{marginTop:6}}>{mediaFiles.map((f,i)=>(<div key={i} className="mthumb">{f.type==="video"?<video src={API+f.url} muted/>:<img src={API+f.url} alt="" loading="lazy"/>}<div className="num">{i+1}</div>{f.type==="video"&&<div className="vbadge">VID</div>}<button className="rm" onClick={()=>setMF(p=>p.filter((_,j)=>j!==i))}>✕</button></div>))}</div>)}
+            </div>
+            <div className="card"><div className="clabel">⚙️ Settings</div><div className="row2"><div className="field"><label className="lbl">Max Duration</label><input type="number" className="inp" min={5} max={120} value={maxDur} onChange={e=>setMaxDur(parseInt(e.target.value)||30)} style={{fontSize:11}}/></div><div className="field"><label className="lbl">Aspect Ratio</label><select className="sel" value={ar} onChange={e=>setAR(e.target.value)} style={{fontSize:11}}><option value="9:16">9:16 TikTok</option><option value="16:9">16:9 YouTube</option></select></div></div></div>
+
+            <div className="card" style={{background:'linear-gradient(135deg,var(--surface) 0%,rgba(139,92,246,.06) 100%)'}}>
+              <div className="clabel">🚀 Create</div>
+              <button className={"btn btn-p"+(isWorking?" gen-pulse":"")} style={{background:'linear-gradient(135deg,var(--accent) 0%,var(--pink) 100%)',fontSize:13,padding:'14px 16px'}} onClick={handleGenerate} disabled={!canGenerate||isWorking}>
+                {isWorking?(jobMode==="rendering"?"⏳ AI Rendering Scenes...":"🤖 AI Analyzing..."):"🎬 Generate AMV"}
+              </button>
+              <div style={{fontSize:9,color:'var(--text3)',textAlign:'center',marginTop:6,lineHeight:1.6}}>{canGenerate?"AI analyzes beats → picks compositions, effects, transitions → renders all scenes":"Upload music + media to enable"}</div>
+            </div>
+          </div>
+
+          <div>
+            {currentJobId&&jobMode==="rendering"&&(<SSEProgress jobId={currentJobId} onReady={onSessionReady}/>)}
+            {generating&&!currentJobId&&(<div className="card fade-in"><div className="clabel">⏳ AI Editor Working</div><div className="pbg"><div className="pfill" style={{width:genProg+"%"}}/></div>{GEN_STEPS.map((s,i)=>(<div key={s.id} className={"steprow"+(i===genStep?" active":i<genStep?" done":"")}><span style={{width:14}}>{i<genStep?"✅":i===genStep?s.i:"⏳"}</span>{s.l}</div>))}</div>)}
+            {error&&<div className="err fade-in"><span>❌</span><div style={{flex:1}}>{error}</div></div>}
+
+            {jobMode==="done"&&sessionId&&scenes.length>0&&!genResult?.video&&(
+              <div className="fade-in"><div className="card" style={{textAlign:'center',background:'linear-gradient(135deg,var(--surface) 0%,rgba(52,211,153,.05) 100%)',border:'1px solid rgba(52,211,153,.2)'}}>
+                {autoExporting?(<>
+                  <div style={{fontSize:30,marginBottom:8}} className="spinning">⟳</div>
+                  <div style={{fontSize:16,fontWeight:700,marginBottom:6,color:'var(--accent2)'}}>Exporting Video...</div>
+                  <div style={{fontSize:12,color:'var(--text2)',marginBottom:14}}>Combining {scenes.length} scenes with audio into final video</div>
+                  <div className="pbg" style={{maxWidth:300,margin:'0 auto'}}><div className="pfill" style={{width:'60%'}}/></div>
+                </>):(<>
+                  <div style={{fontSize:40,marginBottom:8}}>✅</div>
+                  <div style={{fontSize:16,fontWeight:700,marginBottom:6,color:'var(--green)'}}>Generation Complete!</div>
+                  <div style={{fontSize:12,color:'var(--text2)',marginBottom:14,lineHeight:1.6}}>AI editor created <b style={{color:'var(--text)'}}>{scenes.length} scenes</b> with compositions, effects, transitions, and color grading.</div>
+                </>)}
+                <div style={{display:'flex',gap:4,flexWrap:'wrap',justifyContent:'center',marginBottom:16}}>
+                  {scenes.filter(s=>s.composition).length>0&&<span style={{fontSize:9,fontWeight:700,padding:'3px 8px',borderRadius:12,background:'rgba(34,211,238,.1)',color:'var(--cyan)',border:'1px solid rgba(34,211,238,.2)'}}>🎬 {scenes.filter(s=>s.composition).length} compositions</span>}
+                  {scenes.filter(s=>s.editSource==='llm').length>0&&<span style={{fontSize:9,fontWeight:700,padding:'3px 8px',borderRadius:12,background:'rgba(139,92,246,.1)',color:'var(--accent2)',border:'1px solid rgba(139,92,246,.2)'}}>🤖 {scenes.filter(s=>s.editSource==='llm').length} AI-advised</span>}
+                  <span style={{fontSize:9,fontWeight:700,padding:'3px 8px',borderRadius:12,background:'rgba(251,191,36,.1)',color:'var(--amber)',border:'1px solid rgba(251,191,36,.2)'}}>⏱ {totalDur.toFixed(1)}s</span>
+                </div>
+                {!autoExporting&&<button className="btn btn-p" onClick={()=>setEditor(true)} style={{background:'linear-gradient(135deg,var(--accent) 0%,var(--pink) 100%)',maxWidth:340,margin:'0 auto',fontSize:13,padding:'13px 20px'}}>🎛 Open Timeline Editor</button>}
+                {!autoExporting&&<div style={{fontSize:9,color:'var(--text3)',marginTop:8}}>Video is exporting... or open editor now</div>}
+              </div></div>
+            )}
+
+            {genResult?.video&&(<div className="fade-in"><div className="card" style={{padding:0,overflow:'hidden'}}><div className="vwrap" style={{border:'none'}}><video src={API+genResult.video.url} controls autoPlay playsInline/><div className="vmeta"><div className="vtags">{genResult.stats?.generationTime&&<span className="vtag" style={{background:'rgba(139,92,246,.1)',color:'var(--accent2)'}}>⏱ {genResult.stats.generationTime}</span>}{genResult.stats?.sceneCount&&<span className="vtag" style={{background:'rgba(52,211,153,.1)',color:'var(--green)'}}>🎬 {genResult.stats.sceneCount} scenes</span>}</div><a href={API+genResult.video.url} download className="dl">↓ Download</a></div></div></div>
+              {sessionId&&scenes.length>0&&(<div className="card" style={{textAlign:'center'}}><div style={{fontSize:13,fontWeight:700,marginBottom:6}}>Fine-tune?</div><button className="btn btn-p" onClick={()=>setEditor(true)} style={{maxWidth:320,margin:'0 auto'}}>🎛 Open Timeline Editor</button></div>)}
+            </div>)}
+
+            {!genResult&&!generating&&jobMode==="idle"&&(<div style={{display:'flex',alignItems:'center',justifyContent:'center',minHeight:350,color:'var(--text3)',flexDirection:'column',gap:12}}><span style={{fontSize:48,opacity:.5}}>🎬</span><span style={{fontSize:13,fontWeight:500}}>Upload music + photos, then hit Generate</span><span style={{fontSize:10,maxWidth:380,textAlign:'center',lineHeight:1.7}}>The AI editor analyzes beats, picks compositions, effects, transitions, and color grading for each scene — like a professional human editor. Then fine-tune in the timeline editor.</span></div>)}
+          </div>
+
+          <div>
+            <div className="card"><div className="clabel">💡 How It Works</div><div style={{fontSize:10,color:'var(--text2)',lineHeight:1.9}}><p><b>1.</b> Upload music + anime images</p><p><b>2.</b> Click <b style={{color:'var(--pink)'}}>Generate AMV</b></p><p style={{paddingLeft:14,fontSize:9,color:'var(--text3)'}}>AI analyzes beats · LLM picks compositions, effects, transitions, grades · renders scenes</p><p><b>3.</b> Review and open editor</p><p style={{paddingLeft:14,fontSize:9,color:'var(--text3)'}}>Audio playback · change per-scene settings · import/export presets</p><p><b>4.</b> Export final video</p></div></div>
+            <div className="card"><div className="clabel">🔌 System</div><div className="srow"><span className="slbl">Server</span><span className={"sbadge "+(health?"sok":"serr")}>{health?"Online":"Offline"}</span></div><div className="srow"><span className="slbl">LLM Editor</span><span className={"sbadge "+(health?.config?.llm==="configured"?"sok":"swarn")}>{health?.config?.llm==="configured"?"Ready":"No key"}</span></div><div className="srow"><span className="slbl">Beat detector</span><span className="sbadge swarn">:5051</span></div><div className="srow"><span className="slbl">Classifier</span><span className={"sbadge "+(classifierInfo?.type==="ml"?"sok":"swarn")}>{classifierInfo?.type==="ml"?"🧠 ML":"📐 Rules"}</span></div>{dbStats?.enabled&&(<div style={{marginTop:8,fontSize:9,color:'var(--text3)',lineHeight:1.7}}>DB: {dbStats.sessions} sessions · {dbStats.editedScenes} edits<br/>Cache: {dbStats.cacheEntries} · Compositions: {dbStats.compositions}</div>)}</div>
+            <div className="card"><div className="clabel">📁 Recent ({history.length})</div>{history.length===0?<div style={{fontSize:9,color:'var(--text3)',textAlign:'center',padding:'10px 0'}}>No videos yet</div>:history.slice(0,8).map((v,i)=>(<div key={i} className="hitem"><div><div className="hname">{v.filename}</div><div className="hdate">{new Date(v.createdAt).toLocaleString()}</div></div><button className="pbtn" onClick={()=>setGRes({video:{url:v.url}})}>▶</button></div>))}</div>
+          </div>
+        </div>
+      )}
+
+      {tab==="ai"&&(
+        <div style={{display:'grid',gridTemplateColumns:'1fr 280px',gap:14,alignItems:'start',marginTop:18}}>
+          <div>
+            <div className="card"><div className="clabel">📝 Prompt</div><div className="field"><textarea className="inp ta" rows={3} placeholder="e.g. 'Top 5 anime fights that broke the internet'" value={prompt} onChange={e=>setPrompt(e.target.value)}/><div className="chips">{PROMPTS.map((p,i)=><button key={i} className="chip" onClick={()=>setPrompt(p)}>{p.length>42?p.slice(0,42)+"…":p}</button>)}</div></div><div className="row2"><div className="field"><label className="lbl">Duration</label><input type="number" className="inp" min={5} max={60} value={aiDur} onChange={e=>setAiDur(parseInt(e.target.value)||15)} style={{fontSize:11}}/></div><div className="field"><label className="lbl">Voice</label><select className="sel" value={voice} onChange={e=>setVoice(e.target.value)} style={{fontSize:11}}><option value="male_en">English Male</option><option value="female_en">English Female</option></select></div></div><div style={{display:'flex',gap:14,marginBottom:10}}><label className="chk"><input type="checkbox" checked={inclAudio} onChange={e=>setIA(e.target.checked)}/><span>Narration</span></label><label className="chk"><input type="checkbox" checked={inclSubs} onChange={e=>setIS(e.target.checked)}/><span>Subtitles</span></label></div><div className="row2"><button className="btn btn-p" onClick={fetchPlan} disabled={!prompt.trim()||planning||aiGenerating} style={{fontSize:11}}>{planning?"⟳ Planning...":"📋 Generate Plan"}</button><button className="btn btn-g" onClick={generateAI} disabled={!prompt.trim()||aiGenerating||planning} style={{fontSize:11}}>{aiGenerating?"⏳...":plan?"🚀 With Plan":"🎬 Direct"}</button></div></div>
+            {aiGenerating&&(<div className="card fade-in"><div className="clabel">⏳ Generating</div><div className="pbg"><div className="pfill" style={{width:aiProg+"%"}}/></div></div>)}
+            {error&&<div className="err fade-in"><span>❌</span><div style={{flex:1}}>{error}</div></div>}
+            {aiResult?.video&&(<div className="card fade-in"><div className="clabel">🎬 Result</div><div className="vwrap"><video src={API+aiResult.video.url} controls autoPlay playsInline/></div><div className="vmeta"><div className="vtags">{aiResult.stats?.generationTime&&<span className="vtag" style={{background:'rgba(139,92,246,.1)',color:'var(--accent2)'}}>⏱ {aiResult.stats.generationTime}</span>}</div><a href={API+aiResult.video.url} download className="dl">↓ Download</a></div></div>)}
+          </div>
+          <div>
+            <div className="card"><div className="clabel">🔌 System</div><div className="srow"><span className="slbl">Server</span><span className={"sbadge "+(health?"sok":"serr")}>{health?"Online":"Offline"}</span></div><div className="srow"><span className="slbl">LLM</span><span className={"sbadge "+(health?.config?.llm==="configured"?"sok":"swarn")}>{health?.config?.llm==="configured"?"Ready":"No key"}</span></div><div className="srow"><span className="slbl">TTS</span><span className="sbadge swarn">:5050</span></div></div>
+            <div className="card"><div className="clabel">📁 Recent ({history.length})</div>{history.slice(0,6).map((v,i)=>(<div key={i} className="hitem"><div><div className="hname">{v.filename}</div></div><button className="pbtn" onClick={()=>setAIRes({video:{url:v.url}})}>▶</button></div>))}</div>
+          </div>
+        </div>
+      )}
+
+      {tab==="market"&&<MarketplaceTab/>}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>

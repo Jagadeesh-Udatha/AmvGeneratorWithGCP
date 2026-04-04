@@ -1,0 +1,44 @@
+
+
+# AMV URLs for Phase 3 training
+# Add YouTube AMV URLs here — one per line
+# Lines starting with # are ignored
+#
+# Tips for good training data:
+#   - Use short AMVs (2-5 min) for faster processing
+#   - Mix of action/sad/romantic AMVs gives better coverage
+#   - 10-20 videos is enough for a solid classifier
+#   - The trainer auto-detects scene cuts and extracts features
+#
+# Example (replace with real AMV links):
+# https://www.youtube.com/watch?v=XXXXXXXXXXX
+# https://www.youtube.com/watch?v=YYYYYYYYYYY
+#
+# Then run:
+#   cd python-tts-service
+#   python amv_trainer.py --all --urls amv_urls.txt
+
+#
+# Or for a quick start with synthetic data (no downloads needed):
+#   python amv_trainer.py --synthetic
+
+https://www.youtube.com/watch?v=UVqi5du-Za0
+https://www.youtube.com/watch?v=lze2HJlbwEE&list=RDlze2HJlbwEE&start_radio=1
+https://www.youtube.com/watch?v=HIb8wPMZ_4M&list=RDHIb8wPMZ_4M&start_radio=1
+https://www.youtube.com/watch?v=sPyd8I220GI
+https://www.youtube.com/watch?v=l98jYIwleO0&list=RDl98jYIwleO0&start_radio=1
+https://www.youtube.com/watch?v=0m63toI1iAQ
+https://www.youtube.com/watch?v=1kY3Bwi_d9s
+https://www.youtube.com/watch?v=kIhXQ422zE8
+https://www.youtube.com/watch?v=OEZdKA9nffo&list=PLOElDiCcQGVy0g-37CGvLLhxRo-1Mj5L_
+https://www.youtube.com/watch?v=xd-Y-PFecuw&list=PLOElDiCcQGVy0g-37CGvLLhxRo-1Mj5L_&index=3
+https://www.youtube.com/watch?v=eR-gpNyb0qU&list=PLOElDiCcQGVy0g-37CGvLLhxRo-1Mj5L_&index=4
+https://www.youtube.com/watch?v=0W_yCiDgxcc&list=PLOElDiCcQGVy0g-37CGvLLhxRo-1Mj5L_&index=6
+https://www.youtube.com/watch?v=YGZLvKAFeYI&list=RDYGZLvKAFeYI&start_radio=1
+https://www.youtube.com/watch?v=l3uqVC-aNEM
+https://www.youtube.com/watch?v=D5MJ7P61Wpc
+https://www.youtube.com/watch?v=9_VAGhAdne8&list=RD9_VAGhAdne8&start_radio=1
+https://www.youtube.com/watch?v=E4fGIttOCUo
+https://www.youtube.com/watch?v=IIYFmbexW3Q
+https://www.youtube.com/watch?v=G3oDpsmJe08
+https://www.youtube.com/watch?v=44pt8w67S8I&list=RD44pt8w67S8I&start_radio=1

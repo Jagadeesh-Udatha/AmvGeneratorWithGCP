@@ -1,0 +1,28 @@
+node_modules/
+output/*.mp4
+uploads/*
+temp/*
+python-tts-service/output/*
+.env
+.DS_Store
+*.log
+node-service/temp/
+node-service/output/
+.env
+node-service/.env
+python-tts-service/.env
+# Keep directories
+!output/.gitkeep
+!uploads/.gitkeep
+!temp/.gitkeep
+!python-tts-service/output/.gitkeep
+!assets/music/.gitkeep
+
+# Python cache
+__pycache__/
+
+# Uploads
+node-service/uploads/
+
+# Generated models
+*.json

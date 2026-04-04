@@ -1,0 +1,7 @@
+flask==3.0.3
+flask-cors==4.0.1
+edge-tts==6.1.12
+gTTS==2.5.3
+
+# Phase 3 — AMV Edit Classifier Training (optional)
+# Install separately: pip install -r requirements-trainer.txt
