@@ -1,19 +1,25 @@
 /**
- * Scene Renderer Service v3.0
+ * Scene Renderer Service v4.0
  *
- * NEW IN v3:
- *   - Scene render cache: (imageHash+settings) → skip re-render if identical
- *   - onSceneDone callback: lets jobQueue emit real-time progress per scene
- *   - Composition path uses compositionEngine v2 (22 compositions, all bugs fixed)
- *   - Vertical_wipe crash fixed (uses shrinking black bar, not crop h=0)
- *   - All compositions/effects go through effectsLibrary for validation
+ * Changes over v3:
+ *   - Multi-image scenes: scene.mediaPaths[] (array) supported in addition to
+ *     scene.mediaPath (string). renderOneScene resolves both.
+ *   - Face-aware crop: if scene.visualFeatures has face_bbox, uses buildFaceCrop()
+ *     to derive a precise FFmpeg crop centred on the detected face.
+ *   - Magnetic mask: if scene.composition === "magnetic_mask", calls Python
+ *     /remove-bg, then composites the subject PNG over a blurred background.
+ *   - Cache key includes all mediaPaths so multi-image scenes are keyed correctly.
+ *   - All v3 behaviour (22 compositions, cache, export, SSE) preserved.
  */
+
+"use strict";
 
 const { exec }   = require("child_process");
 const crypto     = require("crypto");
 const path       = require("path");
 const fs         = require("fs");
 const os         = require("os");
+const axios      = require("axios");
 const { v4: uuidv4 } = require("uuid");
 
 const {
@@ -23,12 +29,19 @@ const {
   resolveLegacyEffect, resolveLegacyTransition,
 } = require("./effectsLibrary");
 
-const { COMPOSITIONS, buildCompositionCmd } = require("./compositionEngine");
+const {
+  COMPOSITIONS,
+  MULTI_IMAGE_COMPOSITIONS,
+  buildCompositionCmd,
+  buildFaceCrop,
+} = require("./compositionEngine");
+
 const db = require("./database");
 
 const SESSIONS_DIR = path.join(__dirname, "..", "temp", "sessions");
 const CACHE_DIR    = path.join(__dirname, "..", "temp", "render_cache");
 const OUTPUT_DIR   = path.join(__dirname, "..", "output");
+const BEAT_SERVICE = process.env.BEAT_SERVICE_URL || "http://localhost:5051";
 
 for (const d of [SESSIONS_DIR, CACHE_DIR, OUTPUT_DIR]) {
   if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
@@ -39,7 +52,7 @@ for (const d of [SESSIONS_DIR, CACHE_DIR, OUTPUT_DIR]) {
 function run(cmd, timeout = 120000) {
   return new Promise((resolve, reject) => {
     exec(cmd, { maxBuffer: 100 * 1024 * 1024, timeout }, (err, stdout, stderr) => {
-      if (err) return reject(new Error(`FFmpeg error: ${stderr?.slice(-600) || err.message}`));
+      if (err) return reject(new Error(`FFmpeg error: ${stderr?.slice(-800) || err.message}`));
       resolve({ stdout, stderr });
     });
   });
@@ -61,41 +74,57 @@ function saveMeta(sessionId, meta) {
   fs.writeFileSync(path.join(sessionDir(sessionId), "meta.json"), JSON.stringify(meta, null, 2));
 }
 
-function isVideo(p) { return /\.(mp4|mov|avi|mkv|webm|m4v)$/i.test(p); }
+function isVideo(p) { return /\.(mp4|mov|avi|mkv|webm|m4v)$/i.test(p || ""); }
+
+/**
+ * Resolve a scene's image paths as an array.
+ * Supports both scene.mediaPaths[] (new) and scene.mediaPath (legacy).
+ * Always returns at least one entry.
+ */
+function resolveMediaPaths(scene) {
+  if (Array.isArray(scene.mediaPaths) && scene.mediaPaths.length > 0) {
+    return scene.mediaPaths.filter(p => typeof p === "string" && p.length > 0);
+  }
+  if (typeof scene.mediaPath === "string" && scene.mediaPath.length > 0) {
+    return [scene.mediaPath];
+  }
+  throw new Error(`Scene ${scene.index ?? "?"} has no valid mediaPath(s)`);
+}
+
+/**
+ * Get a scene's primary (first) media path for cache key and legacy operations.
+ */
+function primaryMediaPath(scene) {
+  return resolveMediaPaths(scene)[0];
+}
 
 // ─── SCENE CACHE KEY ──────────────────────────────────────────────────────────
 
-/**
- * Build a deterministic cache key for a scene render.
- * Two scenes with the same key will produce identical output, so we can skip re-rendering.
- *
- * FIX: beatsInScene is now included so beat-reactive effects (shake, zoom_pulse, etc.)
- * are not incorrectly served from cache when a different song produces different beat
- * positions for the same image+effect combination.
- */
-function buildCacheKey({ mediaPath, effect, composition, colorGrade, overlays, duration, width, height, fps, beatsInScene = [] }) {
-  // Hash the file content (first 64KB) + metadata
-  let fileHash = "nohash";
-  try {
-    const fd  = fs.openSync(mediaPath, "r");
-    const buf = Buffer.alloc(65536);
-    const read = fs.readSync(fd, buf, 0, 65536, 0);
-    fs.closeSync(fd);
-    fileHash = crypto.createHash("md5").update(buf.slice(0, read)).digest("hex").slice(0, 12);
-  } catch {}
+function buildCacheKey({ mediaPaths, effect, composition, colorGrade, overlays, duration, width, height, fps, beatsInScene = [] }) {
+  // Hash first 64KB of each input file
+  const fileHashes = (mediaPaths || []).map(mp => {
+    let hash = "nohash";
+    try {
+      const fd  = fs.openSync(mp, "r");
+      const buf = Buffer.alloc(65536);
+      const n   = fs.readSync(fd, buf, 0, 65536, 0);
+      fs.closeSync(fd);
+      hash = crypto.createHash("md5").update(buf.slice(0, n)).digest("hex").slice(0, 10);
+    } catch {}
+    return hash;
+  }).join("_");
 
-  // Quantise beat offsets to 50ms buckets — small jitter shouldn't bust the cache
   const beatsKey = beatsInScene.length > 0
     ? beatsInScene.map(b => Math.round(b * 20) / 20).join(",")
     : "nobeats";
 
   const keyStr = [
-    fileHash,
+    fileHashes,
     effect || "none",
     composition || "none",
     colorGrade || "none",
     JSON.stringify((overlays || []).sort()),
-    Math.round(duration * 10) / 10, // round to 0.1s
+    Math.round(duration * 10) / 10,
     width,
     height,
     fps,
@@ -109,7 +138,7 @@ function buildCacheKey({ mediaPath, effect, composition, colorGrade, overlays, d
 
 async function resizeMedia(input, width, height, targetDuration) {
   const isVid = isVideo(input);
-  const out   = path.join(os.tmpdir(), `amvprep_${uuidv4().slice(0,8)}.${isVid?"mp4":"jpg"}`);
+  const out   = path.join(os.tmpdir(), `amvprep_${uuidv4().slice(0,8)}.${isVid ? "mp4" : "jpg"}`);
   if (isVid) {
     const cmd = `ffmpeg -y -i "${input}" -t ${targetDuration.toFixed(3)} ` +
       `-vf "scale=${width}:${height}:force_original_aspect_ratio=decrease,` +
@@ -125,26 +154,127 @@ async function resizeMedia(input, width, height, targetDuration) {
   return out;
 }
 
+// ─── MAGNETIC MASK COMPOSITE ──────────────────────────────────────────────────
+
+/**
+ * Call the Python /remove-bg endpoint, then composite the subject (transparent
+ * PNG) over a gaussian-blurred version of the background image using FFmpeg.
+ *
+ * Falls back to the original image if anything fails.
+ *
+ * @param {string}  fgPath   — foreground image path (subject)
+ * @param {string}  bgPath   — background image path (blurred behind subject)
+ * @param {string}  outPath  — .mp4 output path
+ * @param {object}  opts     — {duration, fps, w, h, colorGrade, overlays, post}
+ * @returns {boolean}  true if magnetic mask succeeded, false if fell back
+ */
+async function renderMagneticMask(fgPath, bgPath, outPath, opts) {
+  const { duration, fps, w, h, post } = opts;
+  const dur    = Math.max(0.1, duration).toFixed(3);
+  const durPad = (parseFloat(dur) + 0.1).toFixed(3);
+  const totalFrames = Math.max(4, Math.round(duration * fps));
+
+  let subjectPng = null;
+  const tmpPng   = path.join(os.tmpdir(), `subject_${uuidv4().slice(0,8)}.png`);
+
+  try {
+    // Ask Python service to remove background
+    const resp = await axios.post(
+      `${BEAT_SERVICE}/remove-bg`,
+      { image_path: fgPath },
+      { timeout: 60000, responseType: "arraybuffer" }
+    );
+
+    // If the service returned JSON with success:false, it's a fallback signal
+    const contentType = resp.headers["content-type"] || "";
+    if (contentType.includes("application/json")) {
+      const json = JSON.parse(Buffer.from(resp.data).toString("utf-8"));
+      if (!json.success) {
+        console.log(`   ⚠️  magnetic_mask: /remove-bg returned fallback: ${json.error}`);
+        return false;
+      }
+    }
+
+    fs.writeFileSync(tmpPng, Buffer.from(resp.data));
+    subjectPng = tmpPng;
+
+    // Build FFmpeg composite:
+    //   Input 0: background image (blurred, slow zoom)
+    //   Input 1: subject PNG with alpha (centred, slight zoom)
+    const fc = [
+      // Background: scale to full frame, heavy gaussian blur, slow zoom
+      `[0:v]scale=${w}:${h}:force_original_aspect_ratio=increase,` +
+        `crop=${w}:${h}:(iw-${w})/2:(ih-${h})/2,` +
+        `zoompan=z='1.04+0.02*on/${totalFrames}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${totalFrames}:s=${w}x${h}:fps=${fps},` +
+        `boxblur=28:8,setsar=1[bg]`,
+      // Subject: scale with RGBA preserved, centred
+      `[1:v]scale=${Math.floor(w * 0.88)}:${Math.floor(h * 0.88)}:` +
+        `force_original_aspect_ratio=decrease,` +
+        `pad=${Math.floor(w * 0.88)}:${Math.floor(h * 0.88)}:(ow-iw)/2:(oh-ih)/2:0x00000000,` +
+        `zoompan=z='1.02+0.01*on/${totalFrames}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${totalFrames}:s=${Math.floor(w * 0.88)}x${Math.floor(h * 0.88)}:fps=${fps}[fg]`,
+      // Composite: overlay fg centred on bg
+      `[bg][fg]overlay=x=(W-w)/2:y=(H-h)/2,fps=${fps}${post}[vout]`,
+    ];
+
+    const cmd = `ffmpeg -y ` +
+      `-loop 1 -t ${durPad} -i "${bgPath}" ` +
+      `-loop 1 -t ${durPad} -i "${subjectPng}" ` +
+      `-filter_complex "${fc.join(";")}" ` +
+      `-map "[vout]" ` +
+      `-t ${dur} -an -c:v libx264 -preset fast -crf 20 -pix_fmt yuv420p "${outPath}"`;
+
+    await run(cmd, 120000);
+    console.log(`   ✨ magnetic_mask: composite rendered successfully`);
+    return true;
+
+  } catch (err) {
+    console.warn(`   ⚠️  magnetic_mask fallback: ${err.message}`);
+    return false;
+  } finally {
+    if (subjectPng && fs.existsSync(subjectPng)) {
+      try { fs.unlinkSync(subjectPng); } catch {}
+    }
+  }
+}
+
 // ─── RENDER ONE SCENE ─────────────────────────────────────────────────────────
 
-async function renderOneScene({ processedMediaPath, scene, width, height, fps, outPath, useCache = true }) {
+/**
+ * Render one scene clip to outPath.
+ *
+ * Handles:
+ *   1. magnetic_mask composition  → /remove-bg → FFmpeg composite
+ *   2. Multi-image compositions   → compositionEngine with inputPaths[]
+ *   3. Single-image compositions  → compositionEngine with inputPath
+ *   4. Standard effect pipeline   → buildSceneFilterChain
+ *   5. Video source pipeline      → direct video processing
+ */
+async function renderOneScene({ processedMediaPaths, rawMediaPaths, scene, width, height, fps, outPath, useCache = true }) {
   const {
     duration,
-    effect      = "ken_burns",
-    composition = null,
-    colorGrade  = "none",
-    overlays    = [],
+    effect       = "ken_burns",
+    composition  = null,
+    colorGrade   = "none",
+    overlays     = [],
     beatsInScene = [],
-    faceAware   = false,
+    faceAware    = false,
+    visualFeatures = null,
   } = scene;
+
+  // processedMediaPaths = resized full-frame paths for single-image effects.
+  // rawMediaPaths = original paths for multi-image compositions (they scale themselves).
+  const allPaths    = Array.isArray(processedMediaPaths) ? processedMediaPaths : [processedMediaPaths];
+  const rawPaths    = Array.isArray(rawMediaPaths) && rawMediaPaths.length > 0
+    ? rawMediaPaths : allPaths;
+  const primaryPath = allPaths[0];
 
   const resolvedEffect = resolveLegacyEffect(effect);
 
-  // ── CHECK CACHE ──────────────────────────────────────────────────────────
+  // ── CHECK CACHE ────────────────────────────────────────────────────────────
   let cacheKey = null;
-  if (useCache && !isVideo(processedMediaPath)) {
+  if (useCache && !isVideo(primaryPath)) {
     cacheKey = buildCacheKey({
-      mediaPath:   processedMediaPath,
+      mediaPaths:  allPaths,
       effect:      resolvedEffect,
       composition: composition || null,
       colorGrade,
@@ -162,13 +292,53 @@ async function renderOneScene({ processedMediaPath, scene, width, height, fps, o
     }
   }
 
-  // ── COMPOSITION PATH ─────────────────────────────────────────────────────
-  let cmd;
+  const dur    = Math.max(0.1, duration).toFixed(3);
+  const post   = _buildPost(colorGrade, overlays, width, height);
 
-  if (composition && COMPOSITIONS.has(composition) && !isVideo(processedMediaPath)) {
-    cmd = buildCompositionCmd({
+  // ── MAGNETIC MASK (special composition) ───────────────────────────────────
+  if (composition === "magnetic_mask" && !isVideo(primaryPath)) {
+    // fgPath = first image (subject), bgPath = second image if available, else same
+    const fgPath = primaryPath;
+    const bgPath = allPaths.length > 1 ? allPaths[1] : primaryPath;
+
+    const ok = await renderMagneticMask(fgPath, bgPath, outPath, {
+      duration, fps, w: width, h: height, post,
+    });
+
+    if (!ok) {
+      // Graceful fallback: render fgPath with standard ken_burns
+      console.log(`   ↩  magnetic_mask fell back to standard effect for scene ${scene.index ?? "?"}`);
+      const filterChain = buildSceneFilterChain({
+        effect: "ken_burns", colorGrade, overlayList: overlays,
+        duration, fps, w: width, h: height, beatOffsets: beatsInScene, faceAware,
+      });
+      await run(
+        `ffmpeg -y -loop 1 -t ${(duration + 0.1).toFixed(3)} -i "${primaryPath}" ` +
+        `-vf "${filterChain}" -t ${dur} -an ` +
+        `-c:v libx264 -preset fast -crf 20 -pix_fmt yuv420p "${outPath}"`,
+        60000
+      );
+    }
+
+    _saveCache(cacheKey, outPath, { primaryPath, resolvedEffect, composition, colorGrade, overlays, duration, width, height, fps });
+    return { fromCache: false, cacheKey };
+  }
+
+  // ── COMPOSITION PATH (single or multi-image) ───────────────────────────────
+  if (composition && COMPOSITIONS.has(composition) && !isVideo(primaryPath)) {
+    // Determine face bbox for face-aware crop (if available and OpenCV was used)
+    const faceBbox = (visualFeatures && visualFeatures.face_bbox) || null;
+
+    // For multi-image compositions, collect per-image bboxes if we have them
+    const faceBboxes = [faceBbox]; // Only primary has visual features currently
+
+    // Multi-image compositions receive original (unprocessed) paths so they can
+    // do their own scaling. Single-image compositions use processedMediaPaths[0].
+    const compInputPaths = MULTI_IMAGE_COMPOSITIONS.has(composition) ? rawPaths : allPaths;
+    const cmd = buildCompositionCmd({
       composition,
-      inputPath: processedMediaPath,
+      inputPath:   compInputPaths[0],   // legacy single-image fallback
+      inputPaths:  compInputPaths,      // multi-image preferred
       outPath,
       duration,
       fps,
@@ -177,26 +347,25 @@ async function renderOneScene({ processedMediaPath, scene, width, height, fps, o
       colorGrade,
       overlays,
       beatOffsets: beatsInScene,
+      faceBboxes:  faceBboxes.filter(Boolean),
     });
 
     if (cmd) {
-      console.log(`   🎬 Composition: ${composition} | grade=${colorGrade} | overlays=[${overlays}] | dur=${duration.toFixed(1)}s`);
+      console.log(
+        `   🎬 Composition: ${composition} ` +
+        `(${allPaths.length} img) | grade=${colorGrade} | dur=${duration.toFixed(1)}s`
+      );
       await run(cmd, 120000);
       db.incrementCompositionUse(composition);
-      // Save to cache
-      if (cacheKey) {
-        const size = fs.existsSync(outPath) ? fs.statSync(outPath).size : 0;
-        const cacheClipPath = path.join(CACHE_DIR, `${cacheKey}.mp4`);
-        fs.copyFileSync(outPath, cacheClipPath);
-        db.saveCachedRender({ cacheKey, clipPath: cacheClipPath, imagePath: processedMediaPath, effect: resolvedEffect, composition, colorGrade, overlays, duration, width, height, fps, fileSizeBytes: size });
-      }
+      _saveCache(cacheKey, outPath, { primaryPath, resolvedEffect, composition, colorGrade, overlays, duration, width, height, fps });
       return { fromCache: false, cacheKey };
     }
-    // buildCompositionCmd returned null — fall through to standard path
+    // buildCompositionCmd returned null → fall through to standard path
+    console.log(`   ⚠️  Composition "${composition}" returned null, using standard effect`);
   }
 
-  // ── STANDARD PATH ────────────────────────────────────────────────────────
-  if (isVideo(processedMediaPath)) {
+  // ── STANDARD PATH ─────────────────────────────────────────────────────────
+  if (isVideo(primaryPath)) {
     const filters = [`setsar=1`, `fps=${fps}`];
     const gradeF  = buildColorGrade(colorGrade);
     if (gradeF) filters.push(gradeF);
@@ -206,12 +375,39 @@ async function renderOneScene({ processedMediaPath, scene, width, height, fps, o
     }
     if (!overlays.some(o => o.startsWith("vignette"))) filters.push("vignette=PI/5");
 
-    cmd = `ffmpeg -y -i "${processedMediaPath}" ` +
+    await run(
+      `ffmpeg -y -i "${primaryPath}" ` +
       `-vf "${filters.join(",")}" ` +
-      `-t ${duration.toFixed(3)} -an ` +
-      `-c:v libx264 -preset fast -crf 20 -pix_fmt yuv420p "${outPath}"`;
+      `-t ${dur} -an ` +
+      `-c:v libx264 -preset fast -crf 20 -pix_fmt yuv420p "${outPath}"`,
+      60000
+    );
   } else {
-    const filterChain = buildSceneFilterChain({
+    // Face-aware: if face_bbox is available, prepend a precise crop filter
+    let facePrefix = "";
+    const faceBbox = visualFeatures && visualFeatures.face_bbox;
+    if (faceAware && faceBbox) {
+      // We need source image natural dimensions for crop math.
+      // If not known, fall back to zoompan cy=0.35 (handled in buildMotionFilter).
+      // Here we build an explicit crop for the standard filter chain.
+      // We do NOT apply this for video sources (only static images).
+      try {
+        // Probe source dimensions
+        const probeCmd = `ffprobe -v quiet -print_format json -show_streams "${primaryPath}"`;
+        const { stdout: probeOut } = await run(probeCmd, 10000);
+        const probe    = JSON.parse(probeOut);
+        const vidStream = probe.streams.find(s => s.codec_type === "video");
+        if (vidStream) {
+          const srcW = vidStream.width;
+          const srcH = vidStream.height;
+          facePrefix = buildFaceCrop(faceBbox, srcW, srcH, width, height) + ",";
+        }
+      } catch {
+        // Probe failed — buildSceneFilterChain will use cy=0.35 approximation
+      }
+    }
+
+    const filterChain = facePrefix + buildSceneFilterChain({
       effect:      resolvedEffect,
       colorGrade,
       overlayList: overlays,
@@ -220,30 +416,55 @@ async function renderOneScene({ processedMediaPath, scene, width, height, fps, o
       w: width,
       h: height,
       beatOffsets: beatsInScene,
-      faceAware:   !!faceAware,
+      faceAware:   !!faceAware && !facePrefix, // don't double-apply face centering
     });
-    cmd = `ffmpeg -y -loop 1 -t ${(duration + 0.1).toFixed(3)} -i "${processedMediaPath}" ` +
+
+    await run(
+      `ffmpeg -y -loop 1 -t ${(duration + 0.1).toFixed(3)} -i "${primaryPath}" ` +
       `-vf "${filterChain}" ` +
-      `-t ${duration.toFixed(3)} -an ` +
-      `-c:v libx264 -preset fast -crf 20 -pix_fmt yuv420p "${outPath}"`;
+      `-t ${dur} -an ` +
+      `-c:v libx264 -preset fast -crf 20 -pix_fmt yuv420p "${outPath}"`,
+      60000
+    );
   }
 
-  console.log(`   🔧 FFmpeg render: effect=${resolvedEffect} grade=${colorGrade} overlays=[${overlays}] dur=${duration.toFixed(1)}s`);
-  const preview = cmd.substring(cmd.indexOf('-vf "') + 5, cmd.indexOf('" -t')).substring(0, 200);
-  console.log(`   📝 Filter chain: ${preview}...`);
-  await run(cmd, 60000);
-
-  // Save to cache
-  if (cacheKey && !isVideo(processedMediaPath)) {
-    try {
-      const size = fs.existsSync(outPath) ? fs.statSync(outPath).size : 0;
-      const cacheClipPath = path.join(CACHE_DIR, `${cacheKey}.mp4`);
-      fs.copyFileSync(outPath, cacheClipPath);
-      db.saveCachedRender({ cacheKey, clipPath: cacheClipPath, imagePath: processedMediaPath, effect: resolvedEffect, composition: null, colorGrade, overlays, duration, width, height, fps, fileSizeBytes: size });
-    } catch {} // cache save failure is non-fatal
-  }
-
+  _saveCache(cacheKey, outPath, { primaryPath, resolvedEffect, composition: null, colorGrade, overlays, duration, width, height, fps });
   return { fromCache: false, cacheKey };
+}
+
+function _buildPost(colorGrade, overlays, w, h) {
+  const { buildColorGrade, buildOverlay } = require("./effectsLibrary");
+  const parts = [];
+  const gf = buildColorGrade(colorGrade);
+  if (gf) parts.push(gf);
+  for (const ov of (overlays || [])) {
+    const of_ = buildOverlay(ov, w, h);
+    if (of_) parts.push(of_);
+  }
+  if (!(overlays || []).some(o => o.startsWith("vignette"))) parts.push("vignette=PI/5");
+  return parts.length > 0 ? "," + parts.join(",") : "";
+}
+
+function _saveCache(cacheKey, outPath, meta) {
+  if (!cacheKey) return;
+  try {
+    const cacheClipPath = path.join(CACHE_DIR, `${cacheKey}.mp4`);
+    if (fs.existsSync(outPath)) {
+      const size = fs.statSync(outPath).size;
+      fs.copyFileSync(outPath, cacheClipPath);
+      db.saveCachedRender({
+        cacheKey, clipPath: cacheClipPath,
+        imagePath: meta.primaryPath,
+        effect: meta.resolvedEffect,
+        composition: meta.composition,
+        colorGrade: meta.colorGrade,
+        overlays: meta.overlays,
+        duration: meta.duration,
+        width: meta.width, height: meta.height, fps: meta.fps,
+        fileSizeBytes: size,
+      });
+    }
+  } catch {} // cache save failure is non-fatal
 }
 
 async function makeThumbnail(sceneMp4, thumbPath) {
@@ -254,16 +475,9 @@ async function makeThumbnail(sceneMp4, thumbPath) {
 
 // ─── PREPARE SESSION ──────────────────────────────────────────────────────────
 
-/**
- * Pre-render all scenes for a session.
- *
- * @param {object} params
- *   sessionId, scenes, audioPath, width, height, fps
- *   onSceneDone(sceneIdx, sceneResult) — optional progress callback for job queue
- */
 async function prepareSession({ sessionId, scenes, audioPath, width = 1080, height = 1920, fps = 30, onSceneDone = null }) {
   const dir      = sessionDir(sessionId);
-  const resCache = new Map();
+  const resCache = new Map(); // single-image processed path cache
   const processedScenes = [];
   let cacheHits  = 0;
 
@@ -272,17 +486,39 @@ async function prepareSession({ sessionId, scenes, audioPath, width = 1080, heig
     const outPath   = path.join(dir, `scene_${i}.mp4`);
     const thumbPath = path.join(dir, `thumb_${i}.jpg`);
 
-    // Resize/preprocess media (cached by path)
-    let mediaProc;
-    if (resCache.has(scene.mediaPath)) {
-      mediaProc = resCache.get(scene.mediaPath);
-    } else {
-      mediaProc = await resizeMedia(scene.mediaPath, width, height, scene.duration);
-      if (!isVideo(scene.mediaPath)) resCache.set(scene.mediaPath, mediaProc);
+    // Resolve all media paths for this scene
+    let rawPaths;
+    try {
+      rawPaths = resolveMediaPaths(scene);
+    } catch (err) {
+      console.error(`   ❌ Scene ${i}: ${err.message} — skipping`);
+      continue;
     }
 
+    // Preprocess each unique raw path (resize/transcode)
+    const procPaths = [];
+    for (const rawPath of rawPaths) {
+      if (resCache.has(rawPath)) {
+        procPaths.push(resCache.get(rawPath));
+      } else {
+        try {
+          const proc = await resizeMedia(rawPath, width, height, scene.duration);
+          procPaths.push(proc);
+          if (!isVideo(rawPath)) resCache.set(rawPath, proc);
+        } catch (err) {
+          console.warn(`   ⚠️  Could not preprocess ${path.basename(rawPath)}: ${err.message}`);
+          // Use original as fallback — FFmpeg may handle it directly
+          procPaths.push(rawPath);
+        }
+      }
+    }
+
+    // Render the scene.
+    // rawPaths = originals for multi-image compositions (they scale themselves).
+    // procPaths = resized paths for single-image effects and cache key.
     const { fromCache } = await renderOneScene({
-      processedMediaPath: mediaProc,
+      processedMediaPaths: procPaths,
+      rawMediaPaths:       rawPaths,
       scene,
       width, height, fps,
       outPath,
@@ -290,80 +526,86 @@ async function prepareSession({ sessionId, scenes, audioPath, width = 1080, heig
     });
     if (fromCache) cacheHits++;
 
-    // Mux audio segment into scene video (so preview plays with sound)
-    // Only for scenes >= 0.5s — very short scenes get corrupted by the mux
+    // Mux audio segment (only for scenes >= 0.5s to avoid corruption)
     if (audioPath && fs.existsSync(audioPath) && fs.existsSync(outPath) && scene.duration >= 0.5) {
-      const sceneStart = scene.start || 0;
       const withAudioPath = path.join(dir, `scene_${i}_audio.mp4`);
       try {
         await run(
-          `ffmpeg -y -i "${outPath}" -ss ${sceneStart.toFixed(3)} -t ${scene.duration.toFixed(3)} -i "${audioPath}" ` +
-          `-c:v libx264 -preset ultrafast -crf 18 -pix_fmt yuv420p -c:a aac -b:a 192k ` +
-          `-map 0:v:0 -map 1:a:0 -shortest -fflags +genpts "${withAudioPath}"`,
+          `ffmpeg -y -i "${outPath}" ` +
+          `-ss ${(scene.start || 0).toFixed(3)} -t ${scene.duration.toFixed(3)} -i "${audioPath}" ` +
+          `-c:v libx264 -preset ultrafast -crf 18 -pix_fmt yuv420p ` +
+          `-c:a aac -b:a 192k -map 0:v:0 -map 1:a:0 -shortest -fflags +genpts "${withAudioPath}"`,
           30000
         );
         if (fs.existsSync(withAudioPath) && fs.statSync(withAudioPath).size > 1000) {
           fs.renameSync(withAudioPath, outPath);
         } else {
-          // Muxed file too small = corrupted, keep original
           try { fs.unlinkSync(withAudioPath); } catch {}
         }
-      } catch (e) {
-        // Non-fatal: scene works without audio
+      } catch {
         try { fs.unlinkSync(withAudioPath); } catch {}
       }
     }
 
     await makeThumbnail(outPath, thumbPath);
 
-    const ovsLabel = (scene.overlays || []).join(",") || "—";
-    const compLabel = scene.composition ? ` [${scene.composition}]` : "";
-    console.log(`   ✅ Scene ${i+1}/${scenes.length}${compLabel} (${scene.effect || "?"} | ${scene.colorGrade || "none"} | ${ovsLabel})${fromCache ? " ♻️" : ""}`);
+    const compLabel  = scene.composition ? ` [${scene.composition}]` : "";
+    const ovsLabel   = (scene.overlays || []).join(",") || "—";
+    const imgCount   = rawPaths.length;
+    console.log(
+      `   ✅ Scene ${i+1}/${scenes.length}${compLabel} ` +
+      `(${scene.effect || "?"} | ${scene.colorGrade || "none"} | ${ovsLabel} | ${imgCount}img)` +
+      `${fromCache ? " ♻️" : ""}`
+    );
 
     const processedScene = {
-      index:         i,
-      mediaPath:     scene.mediaPath,
-      mediaProcPath: mediaProc,
-      start:         scene.start       || 0,
-      duration:      scene.duration,
-      effect:        scene.effect      || "ken_burns",
-      transition:    scene.transition  || "dissolve",
-      colorGrade:    scene.colorGrade  || "none",
-      overlays:      scene.overlays    || [],
-      composition:   scene.composition || null,
-      emotion:       scene.emotion     || "neutral",
-      beatsInScene:  scene.beatsInScene  || [],
-      beatStrengths: scene.beatStrengths || [],
-      dropStrength:  scene.dropStrength  || 0.5,
-      llmReasoning:  scene.llmReasoning  || null,
-      editSource:    scene.editSource    || "patterns",
-      faceAware:     scene.faceAware     || false,
-      clipPath:      outPath,
-      thumbUrl:      `/sessions/${sessionId}/thumb_${i}.jpg`,
-      previewUrl:    `/sessions/${sessionId}/scene_${i}.mp4`,
+      index:           i,
+      mediaPath:       rawPaths[0],         // legacy field — primary path
+      mediaPaths:      rawPaths,            // v3: all paths
+      mediaProcPaths:  procPaths,           // preprocessed paths
+      mediaProcPath:   procPaths[0],        // legacy
+      start:           scene.start       || 0,
+      duration:        scene.duration,
+      effect:          scene.effect      || "ken_burns",
+      transition:      scene.transition  || "dissolve",
+      colorGrade:      scene.colorGrade  || "none",
+      overlays:        scene.overlays    || [],
+      composition:     scene.composition || null,
+      emotion:         scene.emotion     || "neutral",
+      beatsInScene:    scene.beatsInScene  || [],
+      beatStrengths:   scene.beatStrengths || [],
+      dropStrength:    scene.dropStrength  || 0.5,
+      llmReasoning:    scene.llmReasoning  || null,
+      editSource:      scene.editSource    || "patterns",
+      faceAware:       scene.faceAware     || false,
+      visualFeatures:  scene.visualFeatures || null,
+      clipPath:        outPath,
+      thumbUrl:        `/sessions/${sessionId}/thumb_${i}.jpg`,
+      previewUrl:      `/sessions/${sessionId}/scene_${i}.mp4`,
     };
 
     processedScenes.push(processedScene);
 
-    // Emit real-time progress (for job queue / SSE)
     if (typeof onSceneDone === "function") {
       onSceneDone(i, {
-        index:      i,
-        previewUrl: processedScene.previewUrl,
-        thumbUrl:   processedScene.thumbUrl,
-        effect:     processedScene.effect,
+        index:       i,
+        previewUrl:  processedScene.previewUrl,
+        thumbUrl:    processedScene.thumbUrl,
+        effect:      processedScene.effect,
         composition: processedScene.composition,
       });
     }
   }
 
-  // Cleanup preprocessed temp files
+  // Cleanup temp preprocessed files (but not originals)
   for (const [orig, proc] of resCache.entries()) {
-    if (proc !== orig) try { fs.unlinkSync(proc); } catch {}
+    if (proc !== orig && fs.existsSync(proc)) {
+      try { fs.unlinkSync(proc); } catch {}
+    }
   }
 
   if (cacheHits > 0) {
-    console.log(`   ♻️  Cache: ${cacheHits}/${scenes.length} scenes served from cache`);
+    console.log(`   ♻️  Cache: ${cacheHits}/${scenes.length} scenes from cache`);
   }
 
   const meta = { sessionId, audioPath, width, height, fps, scenes: processedScenes, createdAt: Date.now() };
@@ -395,33 +637,57 @@ async function rerenderScene(sessionId, sceneIndex, updates) {
     scene.overlays = updates.overlays.filter(o => OVERLAYS.has(o));
   }
   if (updates.composition !== undefined) {
-    scene.composition = (updates.composition && COMPOSITIONS.has(updates.composition)) ? updates.composition : null;
+    if (updates.composition === "magnetic_mask") {
+      scene.composition = "magnetic_mask"; // not in COMPOSITIONS set — handled specially
+    } else {
+      scene.composition = (updates.composition && COMPOSITIONS.has(updates.composition))
+        ? updates.composition : null;
+    }
+  }
+  // Allow updating mediaPaths on rerender
+  if (Array.isArray(updates.mediaPaths) && updates.mediaPaths.length > 0) {
+    scene.mediaPaths = updates.mediaPaths;
+    scene.mediaPath  = updates.mediaPaths[0];
   }
 
-  let mediaProc = scene.mediaProcPath;
-  if (!mediaProc || !fs.existsSync(mediaProc)) {
-    mediaProc = await resizeMedia(scene.mediaPath, meta.width, meta.height, scene.duration);
-    scene.mediaProcPath = mediaProc;
+  // Resolve + preprocess media paths
+  let rawPaths;
+  try {
+    rawPaths = resolveMediaPaths(scene);
+  } catch (err) {
+    throw new Error(`Rerender scene ${sceneIndex}: ${err.message}`);
   }
+
+  const procPaths = [];
+  for (const rawPath of rawPaths) {
+    let proc = scene.mediaProcPath;
+    if (!proc || !fs.existsSync(proc) || rawPaths.length > 1) {
+      proc = await resizeMedia(rawPath, meta.width, meta.height, scene.duration);
+    }
+    procPaths.push(proc);
+  }
+  scene.mediaProcPaths = procPaths;
+  scene.mediaProcPath  = procPaths[0];
 
   // Rerender never uses cache (user explicitly changed something)
   await renderOneScene({
-    processedMediaPath: mediaProc,
+    processedMediaPaths: procPaths,
+    rawMediaPaths:       rawPaths,
     scene,
     width: meta.width, height: meta.height, fps: meta.fps,
     outPath,
     useCache: false,
   });
 
-  // Mux audio segment into re-rendered scene (skip short scenes)
+  // Mux audio
   if (meta.audioPath && fs.existsSync(meta.audioPath) && fs.existsSync(outPath) && scene.duration >= 0.5) {
-    const sceneStart = scene.start || 0;
     const withAudioPath = path.join(dir, `scene_${sceneIndex}_audio.mp4`);
     try {
       await run(
-        `ffmpeg -y -i "${outPath}" -ss ${sceneStart.toFixed(3)} -t ${scene.duration.toFixed(3)} -i "${meta.audioPath}" ` +
-        `-c:v libx264 -preset ultrafast -crf 18 -pix_fmt yuv420p -c:a aac -b:a 192k ` +
-        `-map 0:v:0 -map 1:a:0 -shortest -fflags +genpts "${withAudioPath}"`,
+        `ffmpeg -y -i "${outPath}" ` +
+        `-ss ${(scene.start || 0).toFixed(3)} -t ${scene.duration.toFixed(3)} -i "${meta.audioPath}" ` +
+        `-c:v libx264 -preset ultrafast -crf 18 -pix_fmt yuv420p ` +
+        `-c:a aac -b:a 192k -map 0:v:0 -map 1:a:0 -shortest -fflags +genpts "${withAudioPath}"`,
         30000
       );
       if (fs.existsSync(withAudioPath) && fs.statSync(withAudioPath).size > 1000) {
@@ -429,7 +695,7 @@ async function rerenderScene(sessionId, sceneIndex, updates) {
       } else {
         try { fs.unlinkSync(withAudioPath); } catch {}
       }
-    } catch (e) {
+    } catch {
       try { fs.unlinkSync(withAudioPath); } catch {}
     }
   }
@@ -458,24 +724,21 @@ async function exportSession(sessionId, totalDur) {
   const tmpOut      = path.join(os.tmpdir(), outFilename);
   const finalOut    = path.join(OUTPUT_DIR, outFilename);
 
-  // FIX: Use actual scene durations rather than relying on caller-supplied totalDur
   const actualTotalDur = scenes.reduce((s, sc) => s + (sc.duration || 0), 0);
-  const finalDur = actualTotalDur > 0 ? actualTotalDur : (totalDur || 30);
+  const finalDur       = actualTotalDur > 0 ? actualTotalDur : (totalDur || 30);
 
   const getTransD = (scene, prevScene) => {
-    const raw = getTransitionDuration(scene.transition || "dissolve", scene.dropStrength || 0.5);
+    const raw  = getTransitionDuration(scene.transition || "dissolve", scene.dropStrength || 0.5);
     const maxTd = Math.min(prevScene ? prevScene.duration * 0.8 : 10, scene.duration * 0.8);
     return Math.max(0.02, Math.min(raw, maxTd));
   };
 
-  // FIX: Use :v:0 stream specifier so clips with muxed audio don't confuse FFmpeg
   const inputs = scenes.map(s => `-i "${s.clipPath}"`);
   inputs.push(`-i "${meta.audioPath}"`);
 
   const filters = [];
 
-  // FIX: Normalise every clip to same fps/sar/format before xfade to avoid
-  // "Input link ... parameters (size 1080x1920, SAR 1:1) do not match" errors.
+  // Normalise every clip to same fps/sar/format before xfade
   for (let i = 0; i < scenes.length; i++) {
     filters.push(`[${i}:v:0]fps=${meta.fps || 30},setsar=1,format=yuv420p[nv${i}]`);
   }
@@ -483,21 +746,16 @@ async function exportSession(sessionId, totalDur) {
   if (scenes.length === 1) {
     filters.push(`[nv0]null[vout]`);
   } else if (scenes.length === 2) {
-    const transD = getTransD(scenes[1], scenes[0]);
-    const offset = Math.max(0.03, scenes[0].duration - transD);
+    const transD  = getTransD(scenes[1], scenes[0]);
+    const offset  = Math.max(0.03, scenes[0].duration - transD);
     const { transition: xfN } = mapTransition(scenes[1].transition || "dissolve");
     filters.push(`[nv0][nv1]xfade=transition=${xfN}:duration=${transD.toFixed(3)}:offset=${offset.toFixed(3)}[vout]`);
   } else {
-    // FIX: cumOffset must account for each transition duration being "consumed"
-    // so subsequent offsets line up correctly in the concatenated timeline.
-    // Correct formula: cumOffset += (sceneDuration - transitionDuration)
-    // which is the amount of unique (non-overlapping) time each scene contributes.
     let cumOffset = 0;
     for (let i = 1; i < scenes.length; i++) {
       const prevLabel = i === 1 ? "nv0" : `xf${i - 1}`;
       const outLabel  = i === scenes.length - 1 ? "vout" : `xf${i}`;
       const transD    = getTransD(scenes[i], scenes[i - 1]);
-      // Step = how much of scene[i-1] plays before the transition begins
       const step      = Math.max(0.03, scenes[i - 1].duration - transD);
       cumOffset      += step;
       const { transition: xfN } = mapTransition(scenes[i].transition || "dissolve");
@@ -542,8 +800,8 @@ async function previewTransition(sessionId, sceneIndex) {
   const scenes = meta.scenes;
   const idx    = parseInt(sceneIndex);
 
-  if (idx <= 0) throw new Error("First scene has no incoming transition");
-  if (idx >= scenes.length) throw new Error(`Scene ${idx} not found`);
+  if (idx <= 0)                throw new Error("First scene has no incoming transition");
+  if (idx >= scenes.length)    throw new Error(`Scene ${idx} not found`);
 
   const sceneA = scenes[idx - 1];
   const sceneB = scenes[idx];
@@ -569,13 +827,12 @@ async function previewTransition(sessionId, sceneIndex) {
     `-map "[vout]" -an ` +
     `-c:v libx264 -preset ultrafast -crf 22 -pix_fmt yuv420p "${outPath}"`;
 
-  console.log(`   🔀 Transition preview: scene ${idx-1}→${idx} (${sceneB.transition})`);
   await run(cmd, 30000);
 
   return {
     previewUrl: `/sessions/${sessionId}/trans_preview_${idx}.mp4?t=${Date.now()}`,
     transition: sceneB.transition,
-    duration: transD,
+    duration:   transD,
   };
 }
 

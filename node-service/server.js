@@ -4,10 +4,7 @@ const cors    = require("cors");
 const path    = require("path");
 const fs      = require("fs");
 
-const scriptRoutes = require("./routes/script");
 const audioRoutes  = require("./routes/audio");
-const videoRoutes  = require("./routes/video");
-const mediaRoutes  = require("./routes/media");
 const amvRoutes    = require("./routes/amv");
 
 const app  = express();
@@ -80,10 +77,7 @@ app.get("/health", (req, res) => {
 
 app.get("/api/health", (req, res) => res.redirect("/health"));
 
-app.use("/api/script", scriptRoutes);
 app.use("/api/audio",  audioRoutes);
-app.use("/api/video",  videoRoutes);
-app.use("/api/media",  mediaRoutes);
 app.use("/api/amv",    amvRoutes);
 
 app.use((err, req, res, next) => {

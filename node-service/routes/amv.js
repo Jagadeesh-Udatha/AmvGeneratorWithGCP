@@ -27,7 +27,7 @@ const { prepareSession, rerenderScene, exportSession, cleanSession, listSessions
 const { suggestEffects, getPatterns, getModelInfo } = require("../services/editClassifier");
 const { applyStutterCuts } = require("../services/stutterCutEngine");
 const { adviseScenesWithLLM } = require("../services/llmEditAdvisor");
-const { COMPOSITIONS, COMPOSITION_CATEGORIES } = require("../services/compositionEngine");
+const { COMPOSITIONS, COMPOSITION_CATEGORIES, MULTI_IMAGE_COMPOSITIONS } = require("../services/compositionEngine");
 const { enqueueJob, sseProgressHandler } = require("../services/jobQueue");
 const db = require("../services/database");
 
@@ -187,68 +187,202 @@ router.post("/prepare", async (req, res) => {
     const allBeats     = (beatData.beats || []).filter(t => t < totalDur);
     const beatStr      = beatData.beat_strengths || allBeats.map(() => 0.5);
     const segFeats     = beatData.segment_features || [];
-    const finalDrops   = drops.length > 0 ? drops : allBeats.filter((_, i) => i % 4 === 0);
-    const finalDropStr = drops.length > 0 ? dropStr : finalDrops.map(() => 0.7);
-    const finalDropEmos= drops.length > 0 ? dropEmos : finalDrops.map(() => "neutral");
+    // ── SLOW-BEAT FIX: determine cut point source ─────────────────────────
+    // For slow/emotional music: subdivide at every beat (not just drops)
+    // to prevent single images sitting on screen for 8+ seconds.
+    //
+    // Rules:
+    //   - Always use detected drops if they exist
+    //   - If BPM < 100 OR dominant emotion is slow → use every beat as cut point
+    //   - Else → fall back to every 4th beat as before
+    //   - Scene duration clamped: min 0.8s, max 4.0s (slow mode) / 8.0s (normal)
+    const bpm            = beatData.bpm || 120;
+    const dominantEmotion = (() => {
+      const emoArr = (beatData.drop_emotions || []).concat(beatData.segment_emotions || []);
+      if (!emoArr.length) return "neutral";
+      const counts = emoArr.reduce((a, e) => { a[e] = (a[e] || 0) + 1; return a; }, {});
+      return Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0] || "neutral";
+    })();
+    const isSlowMode = drops.length === 0 && (
+      bpm < 100 || ["sad", "romantic", "calm"].includes(dominantEmotion)
+    );
 
-    const boundaries = [0, ...finalDrops, totalDur].filter((t, i, arr) => t !== arr[i - 1]);
+    const MIN_SCENE_DUR  = 0.8;
+    const MAX_SCENE_DUR  = isSlowMode ? 4.0 : 8.0;
+
+    let finalDrops, finalDropStr, finalDropEmos;
+
+    if (drops.length > 0) {
+      // Drops exist — always use them regardless of BPM/emotion
+      finalDrops   = drops;
+      finalDropStr = dropStr;
+      finalDropEmos = dropEmos;
+      console.log(`   🥁 Drop mode: ${drops.length} drops, BPM=${bpm}`);
+    } else if (isSlowMode) {
+      // Slow/emotional music without drops — use every beat as a cut point
+      finalDrops   = allBeats.filter(t => t < totalDur);
+      finalDropStr = finalDrops.map(() => 0.4); // lower strength = softer transition
+      finalDropEmos = finalDrops.map(() => dominantEmotion);
+      console.log(`   🎵 Slow-beat mode: ${finalDrops.length} beats as cuts, BPM=${bpm}, emotion=${dominantEmotion}`);
+    } else {
+      // Normal fast music without drops — every 4th beat
+      finalDrops   = allBeats.filter((_, i) => i % 4 === 0);
+      finalDropStr = finalDrops.map(() => 0.7);
+      finalDropEmos = finalDrops.map(() => "neutral");
+      console.log(`   ⚡ Beat-4 mode: ${finalDrops.length} markers, BPM=${bpm}`);
+    }
+
+    // Guard: if still no cut points at all (very short/silent audio), make one
+    if (finalDrops.length === 0) {
+      finalDrops    = [totalDur / 2];
+      finalDropStr  = [0.5];
+      finalDropEmos = ["neutral"];
+    }
+
+    const rawBoundaries = [0, ...finalDrops.filter(t => t > 0 && t < totalDur), totalDur]
+      .filter((t, i, arr) => i === 0 || t !== arr[i - 1]);
 
     // ── BEAT-SYNC QUANTIZATION: snap boundaries to nearest beat ──────────
     const fps = 30;
-    const frameStep = 1 / fps; // 33ms
-    const quantizedBoundaries = boundaries.map(b => {
+    const quantizedBoundaries = rawBoundaries.map(b => {
       if (b === 0 || b === totalDur) return b;
-      // Find nearest beat
       let nearest = b;
       let minDist = Infinity;
       for (const beat of allBeats) {
         const dist = Math.abs(beat - b);
         if (dist < minDist) { minDist = dist; nearest = beat; }
       }
-      // Only snap if within 100ms tolerance
-      if (minDist < 0.1) {
-        // Round to nearest frame boundary
-        return Math.round(nearest * fps) / fps;
-      }
-      return Math.round(b * fps) / fps;
+      return minDist < 0.1
+        ? Math.round(nearest * fps) / fps
+        : Math.round(b * fps) / fps;
     });
 
-    const rawScenes  = [];
+    // ── SCENE DURATION ENFORCEMENT ────────────────────────────────────────
+    // After quantization, merge very short segments and split very long ones.
+    const enforcedBoundaries = (() => {
+      const out = [0];
+      for (let i = 1; i < quantizedBoundaries.length; i++) {
+        const prev = out[out.length - 1];
+        const curr = quantizedBoundaries[i];
+        const dur  = curr - prev;
 
-    for (let i = 0; i < quantizedBoundaries.length - 1; i++) {
-      const sceneStart = quantizedBoundaries[i];
-      const sceneEnd   = quantizedBoundaries[i + 1];
+        if (dur < MIN_SCENE_DUR && i < quantizedBoundaries.length - 1) {
+          // Too short — skip this boundary (merge with next segment)
+          continue;
+        }
+
+        if (dur > MAX_SCENE_DUR) {
+          // Too long — split into equal-sized chunks no longer than MAX_SCENE_DUR
+          const nChunks  = Math.ceil(dur / MAX_SCENE_DUR);
+          const chunkDur = dur / nChunks;
+          for (let c = 1; c < nChunks; c++) {
+            // Snap each split point to nearest beat
+            const splitT   = prev + c * chunkDur;
+            let snapT      = splitT;
+            let snapDist   = Infinity;
+            for (const beat of allBeats) {
+              const d = Math.abs(beat - splitT);
+              if (d < snapDist) { snapDist = d; snapT = beat; }
+            }
+            const snapped = snapDist < 0.2 ? Math.round(snapT * fps) / fps : Math.round(splitT * fps) / fps;
+            if (snapped > prev && snapped < curr) out.push(snapped);
+          }
+        }
+
+        out.push(curr);
+      }
+      // Always end exactly at totalDur
+      if (out[out.length - 1] !== totalDur) out.push(totalDur);
+      return out;
+    })();
+
+    const rawScenes = [];
+
+    for (let i = 0; i < enforcedBoundaries.length - 1; i++) {
+      const sceneStart = enforcedBoundaries[i];
+      const sceneEnd   = enforcedBoundaries[i + 1];
       const sceneDur   = parseFloat((sceneEnd - sceneStart).toFixed(3));
-      if (sceneDur < 0.3) continue; // Skip very short scenes — they cause playback stutters
 
-      const dropIdx    = i;
-      const strength   = dropIdx > 0 ? (finalDropStr[dropIdx - 1] ?? 0.7) : 0;
-      const emotion    = dropIdx > 0 ? (finalDropEmos[dropIdx - 1] ?? "neutral") : (finalDropEmos[0] ?? "neutral");
-      const segFeat    = segFeats[dropIdx] || null;
+      // Hard minimum — sub-0.3s scenes crash FFmpeg
+      if (sceneDur < 0.3) continue;
 
-      const sceneBeats = allBeats.filter(t => t >= sceneStart && t < sceneEnd).map(t => parseFloat((t - sceneStart).toFixed(3)));
+      // Resolve drop/emotion index: find the most recent finalDrop at or before sceneStart
+      const dropIdx   = finalDrops.filter(t => t <= sceneStart).length;
+      const strength  = dropIdx > 0 ? (finalDropStr[dropIdx - 1] ?? 0.4) : 0;
+      const emotion   = dropIdx > 0 ? (finalDropEmos[dropIdx - 1] ?? "neutral") : (finalDropEmos[0] ?? "neutral");
+      const segFeat   = segFeats[Math.min(dropIdx, segFeats.length - 1)] || null;
+
+      const sceneBeats = allBeats
+        .filter(t => t >= sceneStart && t < sceneEnd)
+        .map(t => parseFloat((t - sceneStart).toFixed(3)));
+
       const sceneStrengths = sceneBeats.map(bt => {
         const idx = allBeats.findIndex(t => Math.abs(t - (bt + sceneStart)) < 0.01);
         return idx >= 0 ? (beatStr[idx] ?? 0.5) : 0.5;
       });
 
+      // ── MULTI-IMAGE ASSIGNMENT ──────────────────────────────────────────
+      // Assign a sliding window of 1-3 images per scene.
+      // For slow scenes (duration > 2s) or multi-image compositions: 3 images.
+      // For normal scenes: 1 image (standard behaviour).
+      // Images cycle through media_paths with a moving window.
+      const sceneIdx    = rawScenes.length;
+      const imgCount    = media_paths.length;
+      const wantMulti   = isSlowMode && sceneDur >= 2.0 && imgCount >= 2;
+      const windowSize  = wantMulti ? Math.min(3, imgCount) : 1;
+      const mediaPaths  = [];
+      for (let w = 0; w < windowSize; w++) {
+        mediaPaths.push(media_paths[(sceneIdx + w) % imgCount]);
+      }
+
       rawScenes.push({
-        index: rawScenes.length,
-        mediaPath: media_paths[rawScenes.length % media_paths.length],
-        start: sceneStart, end: sceneEnd, duration: sceneDur,
-        dropStrength: strength, emotion, beatsInScene: sceneBeats,
-        beatStrengths: sceneStrengths, segmentFeatures: segFeat,
+        index:           sceneIdx,
+        // Legacy single-path field preserved for backward compat
+        mediaPath:       mediaPaths[0],
+        // New multi-path field
+        mediaPaths:      mediaPaths,
+        start:           sceneStart,
+        end:             sceneEnd,
+        duration:        sceneDur,
+        dropStrength:    strength,
+        emotion,
+        beatsInScene:    sceneBeats,
+        beatStrengths:   sceneStrengths,
+        segmentFeatures: segFeat,
+        isSlowMode,
       });
     }
 
-    // Visual features
+    // Guard: no scenes produced (e.g. totalDur < MIN_SCENE_DUR)
+    if (rawScenes.length === 0) {
+      const fallbackDur = Math.max(0.5, totalDur);
+      rawScenes.push({
+        index: 0, mediaPath: media_paths[0], mediaPaths: [media_paths[0]],
+        start: 0, end: fallbackDur, duration: fallbackDur,
+        dropStrength: 0, emotion: "neutral",
+        beatsInScene: [], beatStrengths: [], segmentFeatures: null, isSlowMode: false,
+      });
+    }
+
+    // ── VISUAL FEATURES (batch) ───────────────────────────────────────────
     try {
-      const uniquePaths = [...new Set(rawScenes.map(s => s.mediaPath))];
-      const vfRes = await axios.post(`${BEAT_SERVICE}/extract-visual-batch`, { image_paths: uniquePaths }, { timeout: 30000 });
+      // Deduplicate across all mediaPaths arrays
+      const uniquePaths = [...new Set(rawScenes.flatMap(s => s.mediaPaths))];
+      const vfRes = await axios.post(
+        `${BEAT_SERVICE}/extract-visual-batch`,
+        { image_paths: uniquePaths },
+        { timeout: 30000 }
+      );
       if (vfRes.data?.success) {
         const featureMap = {};
-        for (const r of vfRes.data.results) { if (r.features) featureMap[r.path] = r.features; }
-        for (const scene of rawScenes) { scene.visualFeatures = featureMap[scene.mediaPath] || null; }
+        for (const r of vfRes.data.results) {
+          if (r.features) featureMap[r.path] = r.features;
+        }
+        for (const scene of rawScenes) {
+          // Attach features for primary image; store per-path map for multi-image
+          scene.visualFeatures = featureMap[scene.mediaPath] || null;
+          scene.visualFeaturesMap = featureMap;
+        }
         console.log(`   👁  Visual features: ${Object.keys(featureMap).length} / ${uniquePaths.length} images`);
       }
     } catch (vfErr) {
@@ -320,7 +454,9 @@ router.post("/prepare", async (req, res) => {
           index: s.index, start: s.start, duration: s.duration, emotion: s.emotion,
           effect: s.effect, transition: s.transition, colorGrade: s.colorGrade || "none",
           overlays: s.overlays || [], composition: s.composition || null,
+          mediaPath: s.mediaPath, mediaPaths: s.mediaPaths || [s.mediaPath],
           llmReasoning: s.llmReasoning || null, editSource: s.editSource || "patterns",
+          isSlowMode: s.isSlowMode || false,
         })),
       });
     }
@@ -698,6 +834,51 @@ router.post("/preset/import/:sessionId", async (req, res) => {
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── BACKGROUND REMOVAL PROXY ────────────────────────────────────────────────
+// Proxies to Python beat-service /remove-bg. Accepts file upload or JSON path.
+
+router.post("/remove-bg", upload.single("file"), async (req, res) => {
+  try {
+    let imagePath = null;
+
+    if (req.file) {
+      // File was uploaded via multipart
+      imagePath = req.file.path;
+    } else {
+      const body = req.body;
+      imagePath  = body.image_path || null;
+      if (!imagePath || !fs.existsSync(imagePath)) {
+        return res.status(400).json({ error: "image_path not found: " + imagePath });
+      }
+    }
+
+    // Forward to Python service
+    const FormData = require("form-data"); // available via axios
+    const form = new FormData();
+    form.append("file", fs.createReadStream(imagePath), path.basename(imagePath));
+
+    const resp = await axios.post(`${BEAT_SERVICE}/remove-bg`, form, {
+      headers: form.getHeaders(),
+      responseType: "arraybuffer",
+      timeout: 90000,
+    });
+
+    const ct = resp.headers["content-type"] || "";
+    if (ct.includes("application/json")) {
+      const json = JSON.parse(Buffer.from(resp.data).toString("utf-8"));
+      return res.status(json.success === false ? 500 : 200).json(json);
+    }
+
+    // Return the PNG directly
+    res.set("Content-Type", "image/png");
+    res.send(Buffer.from(resp.data));
+
+  } catch (err) {
+    console.error("❌ /remove-bg error:", err.message);
+    res.status(500).json({ error: err.message, success: false });
   }
 });
 

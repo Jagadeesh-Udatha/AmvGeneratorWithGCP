@@ -26,3 +26,6 @@ node-service/uploads/
 
 # Generated models
 *.json
+
+node-service/data/
+        node-service/tests/

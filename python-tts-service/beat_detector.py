@@ -84,7 +84,16 @@ def compute_energy_trend(rms_segment):
 
 def classify_emotion(local_bpm, energy, centroid, onset_mean, onset_sharpness, energy_trend):
     """
-    Rule-based classifier v4: map audio features → emotion label.
+    Rule-based classifier v5: map audio features → emotion label.
+
+    v5 changes over v4:
+      - SAD thresholds broadened: captures more slow/melodic segments correctly.
+        Previously only fired at energy < 0.30 + bpm < 95; now fires up to
+        energy < 0.50 + bpm < 100 when onsets are smooth.
+      - ROMANTIC tightened slightly: requires onset_sharpness < 0.30 (was 0.25)
+        to avoid misclassifying slow neutral segments as romantic.
+      - NEUTRAL is now truly the last resort — every slow, melodic, quiet
+        segment should be sad or romantic, not neutral.
 
     Primary signal: onset_sharpness (how percussive the segment is)
     Secondary signals: energy (RMS), BPM, centroid (brightness), energy_trend
@@ -116,9 +125,12 @@ def classify_emotion(local_bpm, energy, centroid, onset_mean, onset_sharpness, e
     if energy > 0.55 and centroid > 0.55 and 100 <= local_bpm <= 145 and onset_sharpness <= 0.45:
         return "triumphant"
 
-    # ── SAD: slow + quiet + smooth ────────────────────────────────────────
-    # Primary: low energy
-    # Support: slow BPM + smooth onsets
+    # ── SAD: slow + relatively quiet + smooth onsets ──────────────────────
+    # v5: broadened. A sad/emotional ballad at 100 BPM with medium energy
+    # (like many J-pop / anime OSTs) was previously classified as neutral.
+    # Now captures any segment that is slow AND not percussive AND not bright.
+
+    # Primary: low energy + slow BPM + smooth onsets
     if energy < 0.30 and local_bpm < 95 and onset_sharpness < 0.30:
         return "sad"
 
@@ -130,15 +142,23 @@ def classify_emotion(local_bpm, energy, centroid, onset_mean, onset_sharpness, e
     if local_bpm < 90 and energy < 0.40 and energy_trend < -0.1:
         return "sad"
 
-    # ── ROMANTIC: medium energy + very smooth onsets + not too fast ───────
-    # Primary: smooth onsets (low sharpness) — this is what separates romantic from neutral
-    # Support: moderate energy + moderate BPM
-    # IMPORTANT: much tighter than v3 to prevent over-classification
-    if onset_sharpness < 0.25 and 0.20 <= energy <= 0.50 and local_bpm < 115:
+    # NEW v5: Slow + moderate energy + smooth onsets → sad (ballad/emotional)
+    # This catches anime ballads at 90-105 BPM with mid-level energy.
+    if local_bpm < 105 and energy < 0.50 and onset_sharpness < 0.35 and centroid < 0.50:
+        return "sad"
+
+    # NEW v5: Falling energy on a slow-ish song = emotional/sad outro
+    if energy_trend < -0.20 and local_bpm < 115 and energy < 0.55:
+        return "sad"
+
+    # ── ROMANTIC: medium energy + smooth onsets + not too fast ────────────
+    # v5: slightly broader sharpness threshold (was < 0.25, now < 0.30)
+    # to catch more melodic/gentle sections that aren't quite sad.
+    if onset_sharpness < 0.30 and 0.20 <= energy <= 0.55 and local_bpm < 115:
         return "romantic"
 
     # Also romantic if smooth + moderate with slightly higher energy
-    if onset_sharpness < 0.20 and energy <= 0.55 and 75 <= local_bpm <= 120:
+    if onset_sharpness < 0.22 and energy <= 0.60 and 75 <= local_bpm <= 120:
         return "romantic"
 
     # ── NEUTRAL: everything else ──────────────────────────────────────────
@@ -177,7 +197,10 @@ def analyze(audio_path: str, sensitivity: float = 0.5) -> dict:
 
     # Drop detection (same logic as v2/v3)
     threshold      = combined.mean() + (1.5 - sensitivity) * combined.std()
-    beats_per_sec  = bpm / 60.0
+    # Guard: librosa returns bpm=0.0 on silence or very short audio.
+    # Clamp to minimum 60 BPM so beats_per_sec is never 0 (avoids ZeroDivisionError).
+    safe_bpm       = max(60.0, bpm)
+    beats_per_sec  = safe_bpm / 60.0
     min_gap_sec    = max(0.5, 2.0 / beats_per_sec)
     min_gap_frames = int(min_gap_sec * sr / hop_length)
 
@@ -229,7 +252,12 @@ def analyze(audio_path: str, sensitivity: float = 0.5) -> dict:
 
         beats_in_seg = [t for t in beat_times if seg_start <= t < seg_end]
         seg_dur      = seg_end - seg_start
-        local_bpm    = (len(beats_in_seg) / seg_dur * 60.0) if len(beats_in_seg) >= 2 else bpm
+        # Guard: seg_dur must be > 0 and beats >= 2 for a reliable local BPM.
+        # Fall back to global bpm when segment is too short or has too few beats.
+        if len(beats_in_seg) >= 2 and seg_dur > 0.1:
+            local_bpm = len(beats_in_seg) / seg_dur * 60.0
+        else:
+            local_bpm = safe_bpm  # use the already-clamped global BPM
 
         emotion = classify_emotion(
             local_bpm, seg_rms, seg_centroid, seg_onset,
@@ -368,10 +396,95 @@ def extract_visual_batch_route():
         return jsonify({"error": str(e)}), 500
 
 
+# ── BACKGROUND REMOVAL ───────────────────────────────────────────────────────
+
+@app.route("/remove-bg", methods=["POST"])
+def remove_bg_route():
+    """
+    Remove the background from an uploaded image using rembg.
+
+    Accepts:
+      multipart/form-data  with field "file"   (file upload)
+      application/json     with field "image_path"  (server-side path)
+
+    Returns:
+      On success: PNG file with transparent background (RGBA).
+      On rembg-not-installed: 501 with install hint.
+      On failure: fallback response pointing to original image.
+    """
+    import tempfile, uuid, os
+
+    try:
+        from visual_features import remove_background, HAS_REMBG
+    except ImportError:
+        return jsonify({"error": "visual_features module not found"}), 500
+
+    if not HAS_REMBG:
+        return jsonify({
+            "error":   "rembg not installed",
+            "hint":    "pip install rembg onnxruntime",
+            "success": False,
+        }), 501
+
+    # ── Resolve input path ───────────────────────────────────────────────────
+    image_path = None
+    tmp_upload = None
+
+    if request.content_type and "multipart" in request.content_type:
+        # File upload
+        file_obj = request.files.get("file")
+        if not file_obj:
+            return jsonify({"error": "No file field in multipart request"}), 400
+
+        ext       = os.path.splitext(file_obj.filename or "upload.jpg")[1] or ".jpg"
+        tmp_upload = os.path.join(tempfile.gettempdir(), f"rmbg_in_{uuid.uuid4().hex[:8]}{ext}")
+        file_obj.save(tmp_upload)
+        image_path = tmp_upload
+    else:
+        data = request.get_json(force=True, silent=True) or {}
+        image_path = data.get("image_path", "").strip()
+        if not image_path or not os.path.exists(image_path):
+            return jsonify({"error": f"image_path not found: {image_path!r}"}), 400
+
+    # ── Remove background ────────────────────────────────────────────────────
+    out_path = None
+    try:
+        out_path = os.path.join(
+            tempfile.gettempdir(),
+            f"rmbg_out_{uuid.uuid4().hex[:8]}.png",
+        )
+        result_path = remove_background(image_path, out_path)
+
+        from flask import send_file
+        return send_file(
+            result_path,
+            mimetype="image/png",
+            as_attachment=False,
+        )
+
+    except Exception as e:
+        print(f"   ⚠️  /remove-bg failed: {e}")
+        # Graceful fallback: return original image path so caller can proceed
+        return jsonify({
+            "success":   False,
+            "error":     str(e),
+            "fallback":  image_path,  # caller can use original
+        }), 200   # 200 so caller can check success flag without exception handling
+
+    finally:
+        # Clean up temp upload (not the output — caller downloads it synchronously)
+        if tmp_upload and os.path.exists(tmp_upload):
+            try:
+                os.remove(tmp_upload)
+            except Exception:
+                pass
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("BEAT_PORT", 5051))
     print(f"🎵 Beat Detector v4 running on http://localhost:{port}")
     print(f"   Emotion detection: onset sharpness as primary signal")
     print(f"   Visual features: /extract-visual, /extract-visual-batch")
+    print(f"   Background removal: /remove-bg (requires rembg + onnxruntime)")
     print(f"   Classes: hype / triumphant / sad / romantic / neutral")
     app.run(host="0.0.0.0", port=port, debug=False)
