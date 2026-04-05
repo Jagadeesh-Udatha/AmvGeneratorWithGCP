@@ -100,6 +100,11 @@ function primaryMediaPath(scene) {
 
 // ─── SCENE CACHE KEY ──────────────────────────────────────────────────────────
 
+// Bump this version whenever the render pipeline changes in a way that makes
+// existing cached clips incompatible.
+// v1 = original (no tail buffer in clips — tpad now lives in exportSession instead)
+const CACHE_VERSION = "v1";
+
 function buildCacheKey({ mediaPaths, effect, composition, colorGrade, overlays, duration, width, height, fps, beatsInScene = [] }) {
   // Hash first 64KB of each input file
   const fileHashes = (mediaPaths || []).map(mp => {
@@ -119,6 +124,7 @@ function buildCacheKey({ mediaPaths, effect, composition, colorGrade, overlays, 
     : "nobeats";
 
   const keyStr = [
+    CACHE_VERSION,           // invalidates all pre-tail-buffer cached clips
     fileHashes,
     effect || "none",
     composition || "none",
@@ -317,8 +323,7 @@ async function renderOneScene({ processedMediaPaths, rawMediaPaths, scene, width
         `-vf "${filterChain}" -t ${dur} -an ` +
         `-c:v libx264 -preset fast -crf 20 -pix_fmt yuv420p "${outPath}"`,
         60000
-      );
-    }
+      );    }
 
     _saveCache(cacheKey, outPath, { primaryPath, resolvedEffect, composition, colorGrade, overlays, duration, width, height, fps });
     return { fromCache: false, cacheKey };
@@ -383,16 +388,10 @@ async function renderOneScene({ processedMediaPaths, rawMediaPaths, scene, width
       60000
     );
   } else {
-    // Face-aware: if face_bbox is available, prepend a precise crop filter
     let facePrefix = "";
     const faceBbox = visualFeatures && visualFeatures.face_bbox;
     if (faceAware && faceBbox) {
-      // We need source image natural dimensions for crop math.
-      // If not known, fall back to zoompan cy=0.35 (handled in buildMotionFilter).
-      // Here we build an explicit crop for the standard filter chain.
-      // We do NOT apply this for video sources (only static images).
       try {
-        // Probe source dimensions
         const probeCmd = `ffprobe -v quiet -print_format json -show_streams "${primaryPath}"`;
         const { stdout: probeOut } = await run(probeCmd, 10000);
         const probe    = JSON.parse(probeOut);
@@ -402,9 +401,7 @@ async function renderOneScene({ processedMediaPaths, rawMediaPaths, scene, width
           const srcH = vidStream.height;
           facePrefix = buildFaceCrop(faceBbox, srcW, srcH, width, height) + ",";
         }
-      } catch {
-        // Probe failed — buildSceneFilterChain will use cy=0.35 approximation
-      }
+      } catch {}
     }
 
     const filterChain = facePrefix + buildSceneFilterChain({
@@ -416,7 +413,7 @@ async function renderOneScene({ processedMediaPaths, rawMediaPaths, scene, width
       w: width,
       h: height,
       beatOffsets: beatsInScene,
-      faceAware:   !!faceAware && !facePrefix, // don't double-apply face centering
+      faceAware:   !!faceAware && !facePrefix,
     });
 
     await run(
@@ -728,8 +725,13 @@ async function exportSession(sessionId, totalDur) {
   const finalDur       = actualTotalDur > 0 ? actualTotalDur : (totalDur || 30);
 
   const getTransD = (scene, prevScene) => {
-    const raw  = getTransitionDuration(scene.transition || "dissolve", scene.dropStrength || 0.5);
-    const maxTd = Math.min(prevScene ? prevScene.duration * 0.8 : 10, scene.duration * 0.8);
+    const raw   = getTransitionDuration(scene.transition || "dissolve", scene.dropStrength || 0.5);
+    // Clamp: transition can never exceed 75% of the shorter adjacent scene.
+    // For very short Hard Cut scenes (0.5-0.6s) this keeps xfade offsets valid.
+    const maxTd = Math.min(
+      prevScene ? prevScene.duration * 0.75 : 10,
+      scene.duration * 0.75
+    );
     return Math.max(0.02, Math.min(raw, maxTd));
   };
 
@@ -738,9 +740,18 @@ async function exportSession(sessionId, totalDur) {
 
   const filters = [];
 
-  // Normalise every clip to same fps/sar/format before xfade
+  // Normalize every clip and add an inline tail buffer via tpad.
+  // tpad=stop_mode=clone:stop_duration=0.5 appends 0.5s of frozen last-frame
+  // to EVERY input stream INSIDE the filter_complex.
+  // This guarantees xfade always has frames during the transition window
+  // regardless of how long the clip file itself is (short scene, cached clip,
+  // composition, or video source). The final -t finalDur trims the output correctly.
+  const XFADE_PAD = 0.5;
   for (let i = 0; i < scenes.length; i++) {
-    filters.push(`[${i}:v:0]fps=${meta.fps || 30},setsar=1,format=yuv420p[nv${i}]`);
+    filters.push(
+      `[${i}:v:0]fps=${meta.fps || 30},setsar=1,format=yuv420p,` +
+      `tpad=stop_mode=clone:stop_duration=${XFADE_PAD}[nv${i}]`
+    );
   }
 
   if (scenes.length === 1) {
@@ -756,11 +767,13 @@ async function exportSession(sessionId, totalDur) {
       const prevLabel = i === 1 ? "nv0" : `xf${i - 1}`;
       const outLabel  = i === scenes.length - 1 ? "vout" : `xf${i}`;
       const transD    = getTransD(scenes[i], scenes[i - 1]);
+      // FIXED: use transD (clamped) not raw duration for offset step.
+      // Using scenes[i-1].duration directly causes drift when transD is clamped below raw.
       const step      = Math.max(0.03, scenes[i - 1].duration - transD);
       cumOffset      += step;
       const { transition: xfN } = mapTransition(scenes[i].transition || "dissolve");
       filters.push(
-        `[${prevLabel}][nv${i}]xfade=transition=${xfN}:duration=${transD.toFixed(3)}:offset=${cumOffset.toFixed(3)}[${outLabel}]`
+        `[${prevLabel}][nv${i}]xfade=transition=${xfN}:duration=${transD.toFixed(3)}:offset=${parseFloat(cumOffset.toFixed(3))}[${outLabel}]`
       );
     }
   }
@@ -776,6 +789,20 @@ async function exportSession(sessionId, totalDur) {
   cmd += `-c:a aac -b:a 320k -movflags +faststart "${tmpOut}"`;
 
   console.log(`   🎬 Exporting ${scenes.length} scenes, total=${finalDur.toFixed(1)}s`);
+
+  // Debug: log xfade offset chain so we can verify no drift
+  if (scenes.length > 1) {
+    let debugOffset = 0;
+    const offsetLog = scenes.slice(1).map((s, i) => {
+      const td   = getTransD(s, scenes[i]);
+      const step = Math.max(0.03, scenes[i].duration - td);
+      debugOffset += step;
+      return `${debugOffset.toFixed(2)}s`;
+    });
+    console.log(`   📐 xfade offsets: ${offsetLog.join(" → ")}`);
+    console.log(`   📐 scene durations: ${scenes.map(s => s.duration.toFixed(2)+'s').join(", ")}`);
+  }
+
   await run(cmd, 600000);
 
   if (!fs.existsSync(tmpOut)) throw new Error("FFmpeg produced no output");

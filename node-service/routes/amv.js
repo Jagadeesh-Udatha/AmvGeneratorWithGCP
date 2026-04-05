@@ -421,7 +421,9 @@ router.post("/prepare", async (req, res) => {
       console.log(`   ⚠️  Visual features skipped: ${vfErr.message}`);
     }
 
-    // LLM advice (primary) → pattern classifier (fallback)
+    // Scene classification: always try LLM first (even with edit style).
+    // When style is active, suggestEffects will remap/filter LLM output through
+    // the style's palette. When no style, LLM output is used directly.
     let suggestedScenes;
     try {
       const llmResult = await adviseScenesWithLLM(rawScenes, {
@@ -429,9 +431,18 @@ router.post("/prepare", async (req, res) => {
         audioPath: audio_path,
         imagePaths: media_paths,
       });
+      // llmResult may be null (no key / failed) — fall back to classifier
       suggestedScenes = llmResult || suggestEffects(rawScenes, { bpm: beatData.bpm || 120, energy: 0.5 }, beatData, edit_style);
     } catch {
       suggestedScenes = suggestEffects(rawScenes, { bpm: beatData.bpm || 120, energy: 0.5 }, beatData, edit_style);
+    }
+
+    // When edit style is active: re-run suggestEffects over the LLM/classifier output.
+    // The LLM has already enriched scenes with visual reasoning and composition hints.
+    // Now the style palette is applied ON TOP — filtering effects/transitions/grades
+    // to only those valid for the chosen style, keeping LLM's scene-level intelligence.
+    if (activeStyle && suggestedScenes) {
+      suggestedScenes = suggestEffects(suggestedScenes, { bpm: beatData.bpm || 120, energy: 0.5 }, beatData, edit_style);
     }
 
     // Apply beat_map overrides

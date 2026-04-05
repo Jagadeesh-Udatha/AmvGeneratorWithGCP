@@ -450,15 +450,55 @@ function suggestEffects(scenes, globalFeatures, beatData, editStyleId = null) {
     const section = getSongSection(position);
 
     // ══════════════════════════════════════════════════════════════════
-    // EDIT STYLE PATH — user picked a style, it drives everything
+    // EDIT STYLE PATH — style sets the palette, ML/LLM refines within it
     // ══════════════════════════════════════════════════════════════════
     if (editStyle) {
+      // Step A: Get base style picks (palette-constrained)
       effect     = pickStyleEffect(editStyle, i, recentEffects);
       transition = pickStyleTransition(editStyle, i, recentTransitions);
       colorGrade = pickStyleGrade(editStyle, i, dropStr, recentGrades);
-      const overlays = pickStyleOverlays(editStyle, dropStr);
+      const overlays = pickStyleOverlays(editStyle, dropStr, i, totalScenes);
       composition = pickStyleComposition(editStyle, section, i, recentComps);
-      cutSpeed   = editStyle.cutSpeed;
+      cutSpeed    = editStyle.cutSpeed;
+
+      // Step B: ML refinement — if model is loaded, use its energy/emotion reading
+      // to pick a BETTER effect/transition from within the style's pool.
+      // E.g. on a high-energy scene the ML says "zoom_punch" — if zoom_punch is
+      // in the style's pool, prefer it over the round-robin pick.
+      if (model) {
+        const entry = predictFromLookup(model, features);
+        if (entry) {
+          // Remap ML effect to nearest match in style's pool
+          if (editStyle.effects.includes(entry.effect)) {
+            effect = entry.effect; // ML pick is valid for this style — use it
+          }
+          // Remap ML transition to nearest match in style's pool
+          if (i > 0 && editStyle.transitions.includes(entry.transition)) {
+            transition = entry.transition;
+          }
+        }
+      }
+
+      // Step C: Face-aware override within the style pool
+      if (vf.face_present) {
+        const styleFaceEffects = editStyle.effects.filter(e =>
+          ["breathe", "breathe_slow", "ken_burns_slow", "zoom_in", "ken_burns", "rack_focus", "spotlight_zoom"].includes(e)
+        );
+        if (styleFaceEffects.length > 0) {
+          const faceEffect = pickWithVariety(styleFaceEffects, recentEffects, i, songSeed);
+          if (faceEffect) effect = faceEffect;
+        }
+      }
+
+      // Step D: Variety enforcement — ensure no back-to-back repeats
+      if (recentEffects.includes(effect)) {
+        const altEffect = pickWithVariety(editStyle.effects, recentEffects, i, songSeed);
+        if (altEffect) effect = altEffect;
+      }
+      if (i > 0 && recentTransitions.includes(transition)) {
+        const altTrans = pickWithVariety(editStyle.transitions, recentTransitions, i, songSeed);
+        if (altTrans) transition = altTrans;
+      }
 
       recentEffects.push(effect);
       recentTransitions.push(transition);
@@ -469,7 +509,8 @@ function suggestEffects(scenes, globalFeatures, beatData, editStyleId = null) {
       if (recentGrades.length > ROLLING_WINDOW)      recentGrades.shift();
       if (recentComps.length > 4)                    recentComps.shift();
 
-      const reasoning = `${editStyle.label} · ${section.toLowerCase()} · ${composition || effect}`;
+      const mlUsed = model ? "ML+Style" : "Style";
+      const reasoning = `${editStyle.label} · ${section.toLowerCase()} · ${mlUsed} · ${composition || effect}`;
 
       return {
         ...scene,
@@ -479,7 +520,7 @@ function suggestEffects(scenes, globalFeatures, beatData, editStyleId = null) {
         editStyle:        editStyleId,
         editPattern:      editStyle.label,
         editSource:       "style",
-        classifierSource: "style",
+        classifierSource: mlUsed,
         beatAlignment:    parseFloat(beatAlignment.toFixed(3)),
         suggestedEffect:     effect,
         suggestedTransition: transition,

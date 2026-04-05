@@ -120,6 +120,8 @@ const EDIT_STYLES = {
   // ── 3. SMOOTH FLOW ──────────────────────────────────────────────────────────
   // Fluid and continuous. Soft transitions, gentle motion, warm grades.
   // Best for: lofi AMV, chill edits, slice-of-life anime, acoustic songs.
+  // DISTINCT FROM: Emotional (no drift/echo, uses breathe+pan not drift+static)
+  //                Aesthetic (no glow/particles/lens_flare, warmer grades)
   smooth_flow: {
     label:       "🌊 Smooth Flow",
     description: "Fluid and gentle. Soft dissolves, breathe effects, warm and natural grades.",
@@ -132,19 +134,40 @@ const EDIT_STYLES = {
     dropMergeGap: 1.5,
 
     effects: [
-      "breathe", "ken_burns", "pan_right", "drift_right", "breathe_slow",
-      "zoom_in", "pan_left", "drift_left", "tilt_shift", "zoom_out",
+      "breathe",        // sinusoidal zoom — characteristic smooth flow effect
+      "pan_right",      // horizontal pan — movement without zoom
+      "ken_burns",      // classic slow zoom + diagonal pan
+      "breathe_slow",   // slower sinusoidal — calm moments
+      "zoom_in",        // simple linear zoom
+      "pan_left",       // pan opposite direction for variety
+      "zoom_out",       // pull back for wide shots
+      "ken_burns_fast", // faster ken burns at chorus peaks
+      "tilt_shift",     // cinematic depth of field feel
+      "spin_cw",        // gentle circular pan for high-energy moments
     ],
     transitions: [
-      "dissolve", "dissolve_glow", "cross_zoom", "push_right",
-      "fadewhite", "dissolve_fast", "ripple", "push_left",
+      "dissolve",       // standard clean dissolve
+      "push_right",     // slide right — continuous feel
+      "dissolve_glow",  // glow dissolve — warm
+      "cross_zoom",     // zoom blend — dynamic moments
+      "fadewhite",      // white fade — airy
+      "dissolve_fast",  // quick clean cut
+      "ripple",         // water ripple — lofi aesthetic
+      "push_left",      // slide left
     ],
     grades: [
-      "romantic_warm", "cinematic", "vintage", "none",
-      "sunset_gold", "romantic_soft",
+      "romantic_warm",  // warm golden — most characteristic
+      "cinematic",      // teal-orange — versatile
+      "vintage",        // faded sepia — lofi feel
+      "sunset_gold",    // amber warm
+      "none",           // clean no-grade
+      "romantic_soft",  // soft pastel
     ],
     overlays: [
-      "vignette", "film_grain", "particles", "lens_flare",
+      "vignette",       // standard vignette
+      "film_grain",     // analog warmth
+      "particles",      // soft floating dust
+      "lens_flare",     // highlight glow
     ],
     compositions: {
       INTRO:    ["slide_in_left", "rack_focus", "letterbox_pan"],
@@ -158,8 +181,10 @@ const EDIT_STYLES = {
   },
 
   // ── 4. EMOTIONAL ────────────────────────────────────────────────────────────
-  // Slow and melancholic. Long holds, drift effects, blue/grey grades.
+  // Slow and melancholic. Long holds, drift effects, blue/grey grades, rain.
   // Best for: sad AMVs, character tributes, endings, slow ballads.
+  // DISTINCT FROM: Smooth Flow (drift+echo not breathe+pan, cold grades not warm)
+  //                Aesthetic (dark desaturated not bright/pastel, rain not particles)
   emotional: {
     label:       "💙 Emotional",
     description: "Slow and melancholic. Long holds, gentle drifts, blue and grey colour grading.",
@@ -169,21 +194,44 @@ const EDIT_STYLES = {
     maxSceneDur: 7.0,
     transitionDur: 0.40,
     stutterCuts: false,
-    dropMergeGap: 2.0,  // only keep drops 2s+ apart — very sparse cuts
+    dropMergeGap: 2.0,
 
     effects: [
-      "ken_burns_slow", "breathe_slow", "drift_left", "echo_trail",
-      "drift_right", "static", "pan_left", "tilt_shift", "zoom_out", "ken_burns",
+      "ken_burns_slow", // very slow zoom + pan — signature emotional effect
+      "drift_left",     // extremely slow leftward drift — melancholic feel
+      "echo_trail",     // dreamy oscillation — emotional signature
+      "drift_right",    // rightward drift — gentle movement
+      "static",         // no motion — hold on a face, pure emotion
+      "breathe_slow",   // ultra-slow sinusoidal — barely breathing
+      "zoom_out",       // slow pull-back — sense of loss
+      "tilt_shift",     // depth of field — cinematic sadness
+      "pan_left",       // slow pan — searching feel
+      "ken_burns",      // moderate zoom — for mid-energy moments
     ],
     transitions: [
-      "dissolve_slow", "dissolve_glow", "fadeblack_slow", "dissolve",
-      "fadeblack", "ripple", "zoom_blur_out", "push_left",
+      "dissolve_slow",  // very slow blend — characteristic emotional transition
+      "dissolve_glow",  // glow blend — spiritual/emotional
+      "fadeblack_slow", // slow fade to black — weight of sadness
+      "dissolve",       // standard blend
+      "fadeblack",      // fade black — closing feeling
+      "ripple",         // liquid distortion — tears
+      "zoom_blur_out",  // blur out — losing focus
+      "push_left",      // slow leftward push
     ],
     grades: [
-      "sad_blue", "sad_grey", "vintage", "cinematic", "cold_steel", "none",
+      "sad_blue",       // cool desaturated blue — most characteristic
+      "sad_grey",       // near-monochrome — bleakest
+      "vintage",        // faded nostalgic
+      "cinematic",      // teal shadows — cinematic sadness
+      "cold_steel",     // metallic blue-grey — heavy
+      "none",           // raw ungraded — raw emotion
     ],
     overlays: [
-      "vignette_strong", "film_grain", "rain", "vignette", "particles",
+      "vignette_strong", // heavy vignette — closing in feeling
+      "film_grain",      // analog warmth
+      "rain",            // rain overlay — signature emotional
+      "vignette",        // standard vignette
+      "particles",       // dust/tears floating
     ],
     compositions: {
       INTRO:    ["rack_focus", "letterbox_pan", "tilt_reveal"],
@@ -197,8 +245,10 @@ const EDIT_STYLES = {
   },
 
   // ── 5. AESTHETIC ────────────────────────────────────────────────────────────
-  // Dreamy and stylized. Romantic grades, glow overlays, soft pans, artistic.
+  // Dreamy and stylized. Bright pastels, glow, particles, lens flares.
   // Best for: aesthetic edits, romance AMVs, lo-fi, art-house, idol edits.
+  // DISTINCT FROM: Smooth Flow (glow/pastel/particles not warm/film_grain)
+  //                Emotional (bright not dark, romantic not sad grades)
   aesthetic: {
     label:       "✨ Aesthetic",
     description: "Dreamy and artistic. Soft pans, glow overlays, romantic and pastel colour grades.",
@@ -211,19 +261,42 @@ const EDIT_STYLES = {
     dropMergeGap: 1.8,
 
     effects: [
-      "breathe_slow", "ken_burns_slow", "drift_right", "echo_trail",
-      "pan_right", "breathe", "drift_left", "zoom_out", "tilt_shift", "ken_burns",
+      "breathe_slow",   // ultra-soft sinusoidal — dreamy breathing
+      "drift_right",    // gentle rightward drift — flowing
+      "echo_trail",     // oscillating drift — dreamy and soft
+      "pan_right",      // smooth pan — idol-like movement
+      "zoom_out",       // soft pull-back — open and airy
+      "spin_cw",        // slow rotation — artistic carousel
+      "breathe",        // sinusoidal — soft and alive
+      "drift_left",     // leftward flow — aesthetic signature
+      "ken_burns_slow", // very slow zoom — for face close-ups
+      "tilt_shift",     // depth of field — artsy
     ],
     transitions: [
-      "dissolve_glow", "fadewhite", "dissolve", "dissolve_slow",
-      "cross_zoom", "ripple", "zoom_blur_in", "push_right",
+      "dissolve_glow",  // glow blend — signature aesthetic transition
+      "fadewhite",      // white fade — airy and bright
+      "dissolve",       // standard clean blend
+      "dissolve_slow",  // long dreamy blend
+      "cross_zoom",     // dynamic zoom blend — energy moments
+      "ripple",         // water ripple — romantic
+      "zoom_blur_in",   // zoom into light — dreamy
+      "push_right",     // soft rightward push
     ],
     grades: [
-      "romantic_soft", "romantic_warm", "anime_bright", "glow_soft",
-      "vintage", "triumphant_gold", "none",
+      "romantic_soft",  // pastel warm — most characteristic aesthetic grade
+      "anime_bright",   // vivid punchy anime — pop aesthetic
+      "glow_soft",      // soft bloom — dreamy glow
+      "romantic_warm",  // warm golden — romantic
+      "vintage",        // faded nostalgic — artsy
+      "triumphant_gold",// gold/amber — idol energy
+      "none",           // clean
     ],
     overlays: [
-      "vignette", "particles", "lens_flare", "film_grain", "snow",
+      "vignette",       // soft vignette
+      "particles",      // floating sparkles — signature aesthetic overlay
+      "lens_flare",     // light leak/highlight — aesthetic essential
+      "snow",           // soft snow particles — pure aesthetic
+      "film_grain",     // analog texture
     ],
     compositions: {
       INTRO:    ["slide_in_left", "tilt_reveal", "rack_focus"],
@@ -273,31 +346,67 @@ function pickStyleTransition(style, sceneIdx, recentTransitions = []) {
 }
 
 /**
- * Pick a color grade from the style's pool.
- * High-energy scenes (dropStrength > 0.6) pull from top of pool.
- * Low-energy scenes pull from bottom (subtler grades).
+ * Pick a color grade from the style's pool with proper rotation.
+ * Uses scene index for deterministic variety across all grades in the pool.
+ * High-energy scenes (dropStrength > 0.6) pull from top half (most characteristic).
+ * Low-energy pull from bottom half (subtler grades).
  */
 function pickStyleGrade(style, sceneIdx, dropStrength = 0.5, recentGrades = []) {
   const pool = style.grades;
-  const intensity = dropStrength;
-  let slice;
-  if (intensity > 0.65)      slice = pool.slice(0, Math.ceil(pool.length * 0.5));
-  else if (intensity > 0.35) slice = pool.slice(1, pool.length - 1).length > 0 ? pool.slice(1, pool.length - 1) : pool;
-  else                       slice = pool.slice(Math.floor(pool.length * 0.5));
-  const available = slice.filter(g => !recentGrades.includes(g));
-  const candidates = available.length > 0 ? available : slice;
-  return candidates[sceneIdx % candidates.length] || "none";
+  // Rotate through the full pool using scene index — ensures every grade is used
+  const baseIdx = sceneIdx % pool.length;
+  // At high energy bias toward top of pool; at low energy bias toward bottom
+  const energyShift = dropStrength > 0.6 ? 0 : Math.floor(pool.length * 0.4);
+  const candidateIdx = (baseIdx + energyShift) % pool.length;
+
+  // Avoid immediate repeat
+  const candidate = pool[candidateIdx];
+  if (recentGrades.length > 0 && recentGrades[recentGrades.length - 1] === candidate && pool.length > 1) {
+    return pool[(candidateIdx + 1) % pool.length];
+  }
+  return candidate || "none";
 }
 
 /**
- * Pick overlays from the style's pool based on drop strength.
+ * Pick overlays from the style's pool — varied per scene.
+ *
+ * Each scene gets a DIFFERENT combination by rotating which overlays are picked.
+ * The first overlay (vignette/vignette_strong) is always included as anchor.
+ * Additional overlays rotate through the rest of the pool using sceneIdx.
+ *
+ * @param {object} style
+ * @param {number} dropStrength  — 0–1 energy of this scene's drop
+ * @param {number} sceneIdx      — scene index for deterministic rotation
+ * @param {number} totalScenes   — total scene count (for position awareness)
  */
-function pickStyleOverlays(style, dropStrength = 0.5) {
-  const pool = style.overlays;
-  const result = [pool[0]]; // always first (usually vignette)
-  if (dropStrength > 0.5 && pool.length > 1)  result.push(pool[1]);
-  if (dropStrength > 0.75 && pool.length > 2) result.push(pool[2]);
-  return result.filter(Boolean);
+function pickStyleOverlays(style, dropStrength = 0.5, sceneIdx = 0, totalScenes = 1) {
+  const pool   = style.overlays;
+  if (pool.length === 0) return [];
+
+  // Always include the anchor overlay (first in pool — usually vignette)
+  const result = [pool[0]];
+  if (pool.length === 1) return result;
+
+  // Slow/merged-drop styles always get a 2nd overlay — scenes are long enough
+  const alwaysRich = style.cutSpeed === "slow" || style.dropMergeGap >= 1.5;
+  const addSecond  = alwaysRich || dropStrength > 0.45;
+  const addThird   = alwaysRich ? dropStrength > 0.3 : dropStrength > 0.70;
+
+  if (addSecond && pool.length > 1) {
+    // Rotate through pool[1..n] using scene index — each scene picks differently
+    const secondIdx = 1 + (sceneIdx % (pool.length - 1));
+    result.push(pool[secondIdx]);
+  }
+
+  if (addThird && pool.length > 2) {
+    // Third overlay picks from remaining (not same as second)
+    const secondIdx = 1 + (sceneIdx % (pool.length - 1));
+    const thirdIdx  = 1 + ((sceneIdx + 1) % (pool.length - 1));
+    if (thirdIdx !== secondIdx) result.push(pool[thirdIdx]);
+  }
+
+  // Deduplicate and return
+  return [...new Set(result)].filter(Boolean);
 }
 
 /**
