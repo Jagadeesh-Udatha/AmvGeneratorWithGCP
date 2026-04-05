@@ -248,7 +248,7 @@ function MarketplaceTab(){
 
 function App(){
   const [tab,setTab]=useState("amv");const [health,setHealth]=useState(null);const [beatOk,setBeatOk]=useState(null);const [history,setHist]=useState([]);const [error,setErr]=useState(null);const [options,setOptions]=useState(null);
-  const [audioFile,setAF]=useState(null);const [mediaFiles,setMF]=useState([]);const [beatData,setBD]=useState(null);const [analyzing,setAna]=useState(false);const [sensitivity,setSens]=useState(0.5);const [ar,setAR]=useState("9:16");const [maxDur,setMaxDur]=useState(30);const [generating,setGen]=useState(false);const [genStep,setGStep]=useState(-1);const [genProg,setGProg]=useState(0);const [genResult,setGRes]=useState(null);const [classifierInfo,setClassInfo]=useState(null);const [dbStats,setDbStats]=useState(null);
+  const [audioFile,setAF]=useState(null);const [mediaFiles,setMF]=useState([]);const [beatData,setBD]=useState(null);const [analyzing,setAna]=useState(false);const [sensitivity,setSens]=useState(0.5);const [editStyle,setEditStyle]=useState(null);const [ar,setAR]=useState("9:16");const [maxDur,setMaxDur]=useState(30);const [generating,setGen]=useState(false);const [genStep,setGStep]=useState(-1);const [genProg,setGProg]=useState(0);const [genResult,setGRes]=useState(null);const [classifierInfo,setClassInfo]=useState(null);const [dbStats,setDbStats]=useState(null);
   const [currentJobId,setJobId]=useState(null);const [jobMode,setJobMode]=useState("idle");
   const [editorMode,setEditor]=useState(false);const [sessionId,setSid]=useState(null);const [scenes,setScenes]=useState([]);const [totalDur,setTDur]=useState(30);const [audioUrl,setAudioUrl]=useState(null);
   const [autoExporting,setAutoExporting]=useState(false);
@@ -275,7 +275,7 @@ function App(){
   async function handleGenerate(){
     if(!audioFile||!mediaFiles.length)return;
     setGen(true);setErr(null);setGRes(null);setGStep(0);setGProg(5);setJobId(null);setJobMode("analyzing");setEditor(false);setAutoExporting(false);sessionReadyRef.current=false;
-    try{const r=await fetch(API+"/api/amv/prepare",{method:"POST",headers:{"Content-Type":"application/json",...getByokHeaders()},body:JSON.stringify({audio_path:audioFile.path,media_paths:mediaFiles.map(f=>f.path),sensitivity,aspect_ratio:ar,max_duration:maxDur,async_mode:true})});
+    try{const r=await fetch(API+"/api/amv/prepare",{method:"POST",headers:{"Content-Type":"application/json",...getByokHeaders()},body:JSON.stringify({audio_path:audioFile.path,media_paths:mediaFiles.map(f=>f.path),sensitivity,aspect_ratio:ar,max_duration:maxDur,edit_style:editStyle||null,async_mode:true})});
     const d=await r.json();if(!r.ok||!d.success)throw new Error(d.error||"Generation failed");setGProg(30);setGStep(1);setJobId(d.jobId);setJobMode("rendering");if(d.scenes)setScenes(d.scenes);if(d.totalDuration)setTDur(d.totalDuration);setSid(d.sessionId);if(d.audioUrl)setAudioUrl(d.audioUrl);
     }catch(e){setErr(e.message);setGProg(0);setGStep(-1);setJobMode("idle");}finally{setGen(false)}}
 
@@ -375,12 +375,42 @@ function App(){
             </div>
             <div className="card"><div className="clabel">⚙️ Settings</div><div className="row2"><div className="field"><label className="lbl">Max Duration</label><input type="number" className="inp" min={5} max={120} value={maxDur} onChange={e=>setMaxDur(parseInt(e.target.value)||30)} style={{fontSize:11}}/></div><div className="field"><label className="lbl">Aspect Ratio</label><select className="sel" value={ar} onChange={e=>setAR(e.target.value)} style={{fontSize:11}}><option value="9:16">9:16 TikTok</option><option value="16:9">16:9 YouTube</option></select></div></div></div>
 
+            <div className="card">
+              <div className="clabel">🎨 Edit Style</div>
+              <div style={{fontSize:9,color:'var(--text3)',marginBottom:8,lineHeight:1.6}}>How should the video feel? Overrides the auto emotion detection.</div>
+              <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:5}}>
+                {[
+                  {id:null,   icon:'🤖',label:'Auto',     desc:'Let beats decide'},
+                  {id:'hard_cut',  icon:'⚡',label:'Hard Cut',  desc:'Flash cuts & snap zooms'},
+                  {id:'cinematic', icon:'🎬',label:'Cinematic', desc:'Epic & wide graded'},
+                  {id:'smooth_flow',icon:'🌊',label:'Smooth',   desc:'Fluid dissolves & breathe'},
+                  {id:'emotional', icon:'💙',label:'Emotional', desc:'Slow drifts & blue tones'},
+                  {id:'aesthetic', icon:'✨',label:'Aesthetic', desc:'Dreamy glow & pastels'},
+                ].map(s=>{
+                  const active=editStyle===s.id;
+                  return(<button key={s.id||'auto'} onClick={()=>setEditStyle(s.id)}
+                    style={{padding:'7px 4px',borderRadius:8,border:'1.5px solid '+(active?'var(--pink)':'var(--border)'),
+                      background:active?'rgba(236,72,153,.12)':'transparent',cursor:'pointer',
+                      display:'flex',flexDirection:'column',alignItems:'center',gap:2,transition:'all .15s'}}>
+                    <span style={{fontSize:18}}>{s.icon}</span>
+                    <span style={{fontSize:8,fontWeight:700,color:active?'var(--pink)':'var(--text)'}}>{s.label}</span>
+                    <span style={{fontSize:7,color:'var(--text3)',textAlign:'center',lineHeight:1.3}}>{s.desc}</span>
+                  </button>);
+                })}
+              </div>
+              {editStyle&&options?.edit_styles?.[editStyle]&&(
+                <div style={{marginTop:8,padding:'6px 8px',borderRadius:6,background:'rgba(236,72,153,.06)',fontSize:8,color:'var(--text2)',lineHeight:1.7}}>
+                  <b style={{color:'var(--pink)'}}>{options.edit_styles[editStyle].label}</b> — {options.edit_styles[editStyle].description}
+                </div>
+              )}
+            </div>
+
             <div className="card" style={{background:'linear-gradient(135deg,var(--surface) 0%,rgba(139,92,246,.06) 100%)'}}>
               <div className="clabel">🚀 Create</div>
               <button className={"btn btn-p"+(isWorking?" gen-pulse":"")} style={{background:'linear-gradient(135deg,var(--accent) 0%,var(--pink) 100%)',fontSize:13,padding:'14px 16px'}} onClick={handleGenerate} disabled={!canGenerate||isWorking}>
                 {isWorking?(jobMode==="rendering"?"⏳ AI Rendering Scenes...":"🤖 AI Analyzing..."):"🎬 Generate AMV"}
               </button>
-              <div style={{fontSize:9,color:'var(--text3)',textAlign:'center',marginTop:6,lineHeight:1.6}}>{canGenerate?"AI analyzes beats → picks compositions, effects, transitions → renders all scenes":"Upload music + media to enable"}</div>
+              <div style={{fontSize:9,color:'var(--text3)',textAlign:'center',marginTop:6,lineHeight:1.6}}>{canGenerate?(editStyle?`Style: ${options?.edit_styles?.[editStyle]?.label||editStyle} · AI renders all scenes`:"AI analyzes beats → picks compositions, effects, transitions → renders all scenes"):"Upload music + media to enable"}</div>
             </div>
           </div>
 

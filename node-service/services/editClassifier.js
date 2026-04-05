@@ -177,7 +177,11 @@ function classifyEditStyle(features) {
 
 // ─── VARIETY ENFORCEMENT HELPERS ─────────────────────────────────────────────
 
-const ROLLING_WINDOW = 6; // look back this many scenes for variety
+// FIXED: Rolling window reduced from 6 to 3 for effects and transitions.
+// Window of 6 was too aggressive — with 22 scenes and only 4-5 options per
+// emotion palette, the classifier would exhaust all options and fall back to
+// repeating. Window of 3 forces variety without over-constraining choice.
+const ROLLING_WINDOW = 3;
 
 /**
  * Pick an item from a palette array, avoiding recent picks.
@@ -276,14 +280,17 @@ function getSongSection(position) {
 }
 
 // Section-specific composition pools (what a human editor would pick)
+// FIXED: pools expanded to include multi-image compositions and more variety.
+// Previously each section had only 3-5 options; now 6-8 so rolling-window
+// variety enforcement doesn't exhaust the pool after 3 scenes.
 const SECTION_COMPOSITIONS = {
-  INTRO:    ["character_reveal", "slide_in_left", "letterbox_pan", "tilt_reveal"],
-  VERSE_1:  ["parallax", "rack_focus", "letterbox_pan", "slide_in_right"],
-  CHORUS_1: ["impact_frame", "three_panel", "bounce_zoom", "manga_panels", "shockwave"],
-  BRIDGE:   ["mirror_composite", "vhs_composite", "rack_focus", "spotlight_zoom"],
-  CHORUS_2: ["shockwave", "zoom_burst", "diagonal_split", "quad_grid", "impact_frame"],
-  CLIMAX:   ["impact_frame", "shockwave", "bounce_zoom", "three_panel", "zoom_burst"],
-  OUTRO:    ["letterbox_pan", "parallax", "rack_focus"],
+  INTRO:    ["character_reveal", "slide_in_left", "letterbox_pan", "tilt_reveal", "rack_focus", "slide_in_right"],
+  VERSE_1:  ["parallax", "rack_focus", "letterbox_pan", "slide_in_right", "ken_burns", "tilt_reveal", "slide_in_left"],
+  CHORUS_1: ["impact_frame", "three_panel", "bounce_zoom", "manga_panels", "shockwave", "diagonal_split", "quad_grid"],
+  BRIDGE:   ["mirror_composite", "vhs_composite", "rack_focus", "spotlight_zoom", "parallax", "neon_frame"],
+  CHORUS_2: ["shockwave", "zoom_burst", "diagonal_split", "quad_grid", "impact_frame", "three_panel", "bounce_zoom"],
+  CLIMAX:   ["impact_frame", "shockwave", "bounce_zoom", "three_panel", "zoom_burst", "manga_panels", "quad_grid"],
+  OUTRO:    ["letterbox_pan", "parallax", "rack_focus", "tilt_reveal", "slide_in_left"],
 };
 
 // Visual-feature-based overrides (highest priority)
@@ -303,10 +310,12 @@ function pickComposition(scene, position, recentComps, sceneIdx, totalScenes, so
   const vf = scene.visualFeatures || {};
   const ds = scene.dropStrength || 0;
 
-  // Composition frequency: ~45% of scenes get a composition
-  // INTRO/OUTRO always get one. CLIMAX/CHORUS high chance. VERSE/BRIDGE lower.
+  // FIXED: Composition frequency raised from ~45% to ~70% of scenes.
+  // The old rates (VERSE=0.35, BRIDGE=0.40) meant most scenes had NO composition,
+  // so the generated video used flat effects only — wasting the 30 compositions built.
+  // New rates: every section gets at minimum a 55% chance. INTRO/OUTRO stay at 1.0.
   const sectionChance = {
-    INTRO: 1.0, OUTRO: 1.0, CLIMAX: 0.7, CHORUS_1: 0.55, CHORUS_2: 0.6, BRIDGE: 0.4, VERSE_1: 0.35,
+    INTRO: 1.0, OUTRO: 1.0, CLIMAX: 0.90, CHORUS_1: 0.80, CHORUS_2: 0.85, BRIDGE: 0.65, VERSE_1: 0.55,
   };
 
   const chance = sectionChance[section] || 0.4;
@@ -373,7 +382,16 @@ function generateReasoning(scene, section, composition, effect, colorGrade) {
 
 // ─── SUGGEST EFFECTS FOR ALL SCENES (with variety enforcement) ──────────────
 
-function suggestEffects(scenes, globalFeatures, beatData) {
+const {
+  getEditStyle,
+  pickStyleEffect,
+  pickStyleTransition,
+  pickStyleGrade,
+  pickStyleOverlays,
+  pickStyleComposition,
+} = require("./editStyles");
+
+function suggestEffects(scenes, globalFeatures, beatData, editStyleId = null) {
   const model  = loadModel();
   const source = model ? "model" : "patterns";
   const beats  = beatData?.beats || [];
@@ -381,14 +399,15 @@ function suggestEffects(scenes, globalFeatures, beatData) {
     ? beats.slice(1).reduce((sum, b, i) => sum + (b - beats[i]), 0) / (beats.length - 1)
     : 0.5;
 
-  // FIX: Derive a stable song-fingerprint seed from audio features.
-  // This makes the same image at the same position pick DIFFERENT effects/compositions
-  // when the song changes, while remaining deterministic (same song = same result).
-  const bpmBucket   = Math.round((globalFeatures.bpm      || 120) / 5);   // 5-BPM buckets
-  const engBucket   = Math.round((globalFeatures.energy   || 0.5) * 20);  // 0.05 energy buckets
+  // Song-fingerprint seed for deterministic variety
+  const bpmBucket   = Math.round((globalFeatures.bpm      || 120) / 5);
+  const engBucket   = Math.round((globalFeatures.energy   || 0.5) * 20);
   const centBucket  = Math.round((globalFeatures.centroid || 0.5) * 10);
   const beatCount   = beats.length;
   const songSeed    = (bpmBucket * 1000 + engBucket * 100 + centBucket * 10 + (beatCount % 10));
+
+  // If a user edit style is provided, use it to drive ALL selections
+  const editStyle = editStyleId ? getEditStyle(editStyleId) : null;
 
   // Rolling window history for variety enforcement
   const recentEffects     = [];
@@ -396,15 +415,13 @@ function suggestEffects(scenes, globalFeatures, beatData) {
   const recentGrades      = [];
   const recentComps       = [];
 
-  // Detect song sections (rough heuristic: intro=first 15%, outro=last 10%)
   const totalScenes = scenes.length;
 
   return scenes.map((scene, i) => {
-    const position = i / Math.max(1, totalScenes - 1); // 0.0 → 1.0
+    const position = i / Math.max(1, totalScenes - 1);
     const isIntro  = position < 0.12;
     const isOutro  = position > 0.88;
 
-    // Beat alignment for this scene
     let beatAlignment = 0.5;
     if (beats.length) {
       const dists = beats.map(b => Math.abs(scene.start - b));
@@ -430,9 +447,53 @@ function suggestEffects(scenes, globalFeatures, beatData) {
     const vf       = scene.visualFeatures || {};
 
     let transition, effect, colorGrade, cutSpeed, composition;
+    const section = getSongSection(position);
+
+    // ══════════════════════════════════════════════════════════════════
+    // EDIT STYLE PATH — user picked a style, it drives everything
+    // ══════════════════════════════════════════════════════════════════
+    if (editStyle) {
+      effect     = pickStyleEffect(editStyle, i, recentEffects);
+      transition = pickStyleTransition(editStyle, i, recentTransitions);
+      colorGrade = pickStyleGrade(editStyle, i, dropStr, recentGrades);
+      const overlays = pickStyleOverlays(editStyle, dropStr);
+      composition = pickStyleComposition(editStyle, section, i, recentComps);
+      cutSpeed   = editStyle.cutSpeed;
+
+      recentEffects.push(effect);
+      recentTransitions.push(transition);
+      recentGrades.push(colorGrade);
+      if (composition) recentComps.push(composition);
+      if (recentEffects.length > ROLLING_WINDOW)     recentEffects.shift();
+      if (recentTransitions.length > ROLLING_WINDOW) recentTransitions.shift();
+      if (recentGrades.length > ROLLING_WINDOW)      recentGrades.shift();
+      if (recentComps.length > 4)                    recentComps.shift();
+
+      const reasoning = `${editStyle.label} · ${section.toLowerCase()} · ${composition || effect}`;
+
+      return {
+        ...scene,
+        effect, transition, colorGrade, overlays: overlays.filter(Boolean),
+        composition: composition || null,
+        cutSpeed,
+        editStyle:        editStyleId,
+        editPattern:      editStyle.label,
+        editSource:       "style",
+        classifierSource: "style",
+        beatAlignment:    parseFloat(beatAlignment.toFixed(3)),
+        suggestedEffect:     effect,
+        suggestedTransition: transition,
+        suggestedColorGrade: colorGrade,
+        faceAware:           vf.face_present ? true : false,
+        llmReasoning:        reasoning,
+      };
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // ORIGINAL AUTO PATH — no style selected, use emotion + ML/patterns
+    // ══════════════════════════════════════════════════════════════════
 
     // ── Step 0: Assign composition based on visual features + position ──
-    const section = getSongSection(position);
     const compResult = pickComposition(scene, position, recentComps, i, totalScenes, songSeed);
     composition = compResult.composition;
     let compReason = compResult.reason;
@@ -496,7 +557,7 @@ function suggestEffects(scenes, globalFeatures, beatData) {
     if (recentEffects.length > ROLLING_WINDOW) recentEffects.shift();
     if (recentTransitions.length > ROLLING_WINDOW) recentTransitions.shift();
     if (recentGrades.length > ROLLING_WINDOW) recentGrades.shift();
-    if (recentComps.length > 3) recentComps.shift();
+    if (recentComps.length > 4) recentComps.shift();
 
     // ── Generate human-readable reasoning ──
     const reasoning = generateReasoning(scene, section, composition, effect, colorGrade);

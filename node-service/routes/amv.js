@@ -29,6 +29,7 @@ const { applyStutterCuts } = require("../services/stutterCutEngine");
 const { adviseScenesWithLLM } = require("../services/llmEditAdvisor");
 const { COMPOSITIONS, COMPOSITION_CATEGORIES, MULTI_IMAGE_COMPOSITIONS } = require("../services/compositionEngine");
 const { enqueueJob, sseProgressHandler } = require("../services/jobQueue");
+const { EDIT_STYLES, EDIT_STYLE_IDS, getEditStyle } = require("../services/editStyles");
 const db = require("../services/database");
 
 const {
@@ -110,6 +111,8 @@ router.get("/options", (req, res) => {
     transition_categories: TRANSITION_CATEGORIES,
     grade_categories:      GRADE_CATEGORIES,
     edit_patterns:         getPatterns(),
+    edit_styles:           EDIT_STYLES,
+    edit_style_ids:        EDIT_STYLE_IDS,
   });
 });
 
@@ -143,7 +146,8 @@ router.post("/prepare", async (req, res) => {
     aspect_ratio = "9:16",
     max_duration = 60,
     beat_map = {},
-    async_mode = true,  // default: async (non-blocking)
+    edit_style = null,   // "hard_cut" | "cinematic" | "smooth_flow" | "emotional" | "aesthetic" | null (auto)
+    async_mode = true,
   } = req.body;
 
   // Extract BYOK keys from request headers (frontend sends these)
@@ -203,31 +207,59 @@ router.post("/prepare", async (req, res) => {
       const counts = emoArr.reduce((a, e) => { a[e] = (a[e] || 0) + 1; return a; }, {});
       return Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0] || "neutral";
     })();
-    const isSlowMode = drops.length === 0 && (
-      bpm < 100 || ["sad", "romantic", "calm"].includes(dominantEmotion)
-    );
+    // FIXED: isSlowMode now triggers on slow/emotional music even when drops exist.
+    // The old guard (drops.length === 0) meant slow mode never fired for any song
+    // that had detected drops — but slow/sad songs still produce drops on drum hits.
+    // Also: if the detector returns drops denser than every 2 beats (very dense),
+    // those aren't true "drops" — they're beat markers. In that case, also use slow mode
+    // for emotional songs so cuts aren't happening every 0.5s on a ballad.
+    const dropDensity = drops.length / Math.max(1, allBeats.length);
+    const isSlowSong  = bpm < 95 || ["sad", "romantic"].includes(dominantEmotion);
+    const isSlowMode  = isSlowSong || (drops.length === 0 && bpm < 110);
 
-    const MIN_SCENE_DUR  = 0.8;
-    const MAX_SCENE_DUR  = isSlowMode ? 4.0 : 8.0;
+    // Edit style overrides scene duration limits and drop merge gap
+    const activeStyle    = edit_style ? getEditStyle(edit_style) : null;
+    const MIN_SCENE_DUR  = activeStyle ? activeStyle.minSceneDur  : 0.8;
+    const MAX_SCENE_DUR  = activeStyle ? activeStyle.maxSceneDur  : (isSlowMode ? 5.0 : 8.0);
+    const DROP_MERGE_GAP = activeStyle ? activeStyle.dropMergeGap : (isSlowMode ? 1.5 : 0.0);
+
+    if (activeStyle) {
+      console.log(`   🎨 Edit style: ${activeStyle.label} (min=${MIN_SCENE_DUR}s max=${MAX_SCENE_DUR}s mergeGap=${DROP_MERGE_GAP}s)`);
+    }
 
     let finalDrops, finalDropStr, finalDropEmos;
 
     if (drops.length > 0) {
-      // Drops exist — always use them regardless of BPM/emotion
-      finalDrops   = drops;
-      finalDropStr = dropStr;
-      finalDropEmos = dropEmos;
-      console.log(`   🥁 Drop mode: ${drops.length} drops, BPM=${bpm}`);
+      const mergeGap = DROP_MERGE_GAP > 0 ? DROP_MERGE_GAP : (isSlowMode ? 1.5 : 0.0);
+      if (mergeGap > 0) {
+        const mergedDrops = [], mergedStr = [], mergedEmos = [];
+        let lastKept = -Infinity;
+        for (let i = 0; i < drops.length; i++) {
+          if (drops[i] - lastKept >= mergeGap) {
+            mergedDrops.push(drops[i]);
+            mergedStr.push(dropStr[i] || 0.4);
+            mergedEmos.push(dropEmos[i] || dominantEmotion);
+            lastKept = drops[i];
+          }
+        }
+        finalDrops    = mergedDrops.length > 0 ? mergedDrops : drops;
+        finalDropStr  = mergedDrops.length > 0 ? mergedStr   : dropStr;
+        finalDropEmos = mergedDrops.length > 0 ? mergedEmos  : dropEmos;
+        console.log(`   🥁 Drop mode: ${drops.length} → ${finalDrops.length} drops (merge gap ${mergeGap}s), BPM=${bpm}`);
+      } else {
+        finalDrops    = drops;
+        finalDropStr  = dropStr;
+        finalDropEmos = dropEmos;
+        console.log(`   🥁 Drop mode: ${drops.length} drops, BPM=${bpm}`);
+      }
     } else if (isSlowMode) {
-      // Slow/emotional music without drops — use every beat as a cut point
-      finalDrops   = allBeats.filter(t => t < totalDur);
-      finalDropStr = finalDrops.map(() => 0.4); // lower strength = softer transition
+      finalDrops    = allBeats.filter(t => t < totalDur);
+      finalDropStr  = finalDrops.map(() => 0.4);
       finalDropEmos = finalDrops.map(() => dominantEmotion);
       console.log(`   🎵 Slow-beat mode: ${finalDrops.length} beats as cuts, BPM=${bpm}, emotion=${dominantEmotion}`);
     } else {
-      // Normal fast music without drops — every 4th beat
-      finalDrops   = allBeats.filter((_, i) => i % 4 === 0);
-      finalDropStr = finalDrops.map(() => 0.7);
+      finalDrops    = allBeats.filter((_, i) => i % 4 === 0);
+      finalDropStr  = finalDrops.map(() => 0.7);
       finalDropEmos = finalDrops.map(() => "neutral");
       console.log(`   ⚡ Beat-4 mode: ${finalDrops.length} markers, BPM=${bpm}`);
     }
@@ -397,9 +429,9 @@ router.post("/prepare", async (req, res) => {
         audioPath: audio_path,
         imagePaths: media_paths,
       });
-      suggestedScenes = llmResult || suggestEffects(rawScenes, { bpm: beatData.bpm || 120, energy: 0.5 }, beatData);
+      suggestedScenes = llmResult || suggestEffects(rawScenes, { bpm: beatData.bpm || 120, energy: 0.5 }, beatData, edit_style);
     } catch {
-      suggestedScenes = suggestEffects(rawScenes, { bpm: beatData.bpm || 120, energy: 0.5 }, beatData);
+      suggestedScenes = suggestEffects(rawScenes, { bpm: beatData.bpm || 120, energy: 0.5 }, beatData, edit_style);
     }
 
     // Apply beat_map overrides
@@ -414,7 +446,9 @@ router.post("/prepare", async (req, res) => {
       };
     });
 
-    const scenes = applyStutterCuts(scenesBeforeStutter, allBeats, { bpm: beatData.bpm || 120, enabled: true });
+    // Stutter cuts: disabled when the edit style opts out
+    const stutterEnabled = activeStyle ? activeStyle.stutterCuts : true;
+    const scenes = applyStutterCuts(scenesBeforeStutter, allBeats, { bpm: beatData.bpm || 120, enabled: stutterEnabled });
     scenes.forEach((s, i) => { s.index = i; });
 
     const sessionId = uuidv4().slice(0, 12);
