@@ -28,6 +28,7 @@ const { suggestEffects, getPatterns, getModelInfo } = require("../services/editC
 const { applyStutterCuts } = require("../services/stutterCutEngine");
 const { adviseScenesWithLLM } = require("../services/llmEditAdvisor");
 const { COMPOSITIONS, COMPOSITION_CATEGORIES, MULTI_IMAGE_COMPOSITIONS } = require("../services/compositionEngine");
+const { getContracts } = require("../services/animationContract");
 const { enqueueJob, sseProgressHandler } = require("../services/jobQueue");
 const { EDIT_STYLES, EDIT_STYLE_IDS, getEditStyle } = require("../services/editStyles");
 const db = require("../services/database");
@@ -113,6 +114,35 @@ router.get("/options", (req, res) => {
     edit_patterns:         getPatterns(),
     edit_styles:           EDIT_STYLES,
     edit_style_ids:        EDIT_STYLE_IDS,
+  });
+});
+
+// Animation contract — shared animation math between backend renderer and frontend preview.
+// Frontend fetches this once and uses it to drive timeline canvas preview.
+// Same numbers, same easing, same keyframes that FFmpeg uses.
+router.get("/animation-contract", (req, res) => {
+  const dur = parseFloat(req.query.duration) || 2.0;
+  const fps = parseInt(req.query.fps)        || 30;
+  const w   = parseInt(req.query.w)          || 1080;
+  const h   = parseInt(req.query.h)          || 1920;
+  const contracts = getContracts(dur, fps, w, h);
+  res.json({
+    success: true,
+    duration: dur, fps, w, h,
+    // Easing function definitions (for frontend to implement matching JS)
+    easings: {
+      easeOutCubic:   "1 - (1-p)^3",
+      easeInCubic:    "p^3",
+      easeInOutCubic: "p<0.5 ? 4p^3 : 1-(-2p+2)^3/2",
+      spring:         "1 - exp(-6p) * cos(12p)",
+      linear:         "p",
+    },
+    // p(t, startSec, durSec) = clamp((t-startSec)/durSec, 0, 1)
+    progressFormula: "clamp((t - startTime) / duration, 0, 1)",
+    contracts,
+    // Registry — all valid composition names (exact match with backend)
+    compositions: [...COMPOSITIONS].sort(),
+    categories: COMPOSITION_CATEGORIES,
   });
 });
 

@@ -1,96 +1,161 @@
 /**
- * Composition Engine v4.0 — Complete Rewrite
+ * Composition Engine v6.0 — Full Professional Rewrite
  *
- * WHAT CHANGED FROM v3:
- *   All three multi-image compositions (beat_stack_3, triptych_reveal,
- *   stagger_slide_up) were broken due to three bugs:
+ * ═══════════════════════════════════════════════════════════════════════
+ * ARCHITECTURE PRINCIPLES
+ * ═══════════════════════════════════════════════════════════════════════
  *
- *   BUG 1 (beat_stack_3): resizeMedia pre-processes images to full-frame
- *     1080×1920. Then the composition tried to re-scale to strip height
- *     (e.g. 1080×640) with force_original_aspect_ratio=increase, producing
- *     a 360×640 image. The subsequent crop=(iw-1080)/2 = (360-1080)/2 = -360,
- *     a negative x offset that crashes FFmpeg silently.
- *     FIX: Use scale=w:slotH:force_original_aspect_ratio=increase,
- *          crop=w:slotH (iw≥w guaranteed because increase mode), setsar=1.
- *          Never rely on (iw-target)/2 — use 0-safe crop offsets.
+ * 1. MOTION SYSTEM — two separate tools, never mixed:
+ *    zoompan  → ONLY for scale/zoom (Ken Burns, punch-zoom, bounce)
+ *               x/y in zoompan = crop-window origin in INPUT space, not screen
+ *    overlay  → ALL screen-space translation (swipes, panels, PIP, curtains)
+ *               x/y in overlay = position of element on OUTPUT canvas
  *
- *   BUG 2 (triptych_reveal): Panels snapped into position instantly because
- *     the overlay y expression jumped from h to 0 with no interpolation.
- *     FIX: Use 't' (time in seconds) for smooth linear slide:
- *          y='if(lt(t,T), H, max(0, H*(1-(t-T)/slideD)))'
+ * 2. COORDINATE SYSTEM — single source of truth per composition:
+ *    Every element is pre-scaled to its final size BEFORE placement.
+ *    scaleFill(w,h) produces exactly w×h pixels — no padding, no black bars.
+ *    Overlay positions are in OUTPUT canvas coordinates (0,0 = top-left).
  *
- *   BUG 3 (stagger_slide_up): All images used enable='gte(n,0)' (always true)
- *     and were full-frame overlays — only the top image was visible. Stagger
- *     offsets were 5 frames (~0.17s) — invisible on 3-second scenes.
- *     FIX: Use time-based expressions, larger stagger, and correct z-ordering
- *          so earlier images stay visible as later ones slide over them.
+ * 3. ANIMATION MATH — standardized easing (same in FFmpeg and timeline editor):
+ *    p(t, start, dur) = clamp((t - start) / dur, 0, 1)
+ *    easeOutCubic(p)  = 1 - (1-p)^3   → natural deceleration, FCP default
+ *    easeInCubic(p)   = p^3            → acceleration (used for exits)
+ *    bounce(p)        = 1 - exp(-6p)*cos(12p)  → elastic settle
+ *    FFmpeg expression: 1-(1-min(1,(t-S)/D))^3
  *
- * DESIGN RULES FOR ALL COMPOSITIONS:
- *   - Use 't' (seconds) not 'n' (frames) for time expressions — more robust
- *     across FFmpeg versions and filter chains.
- *   - All scale ops use force_original_aspect_ratio=increase then
- *     crop=targetW:targetH:0:0 (top-left crop, never negative offsets).
- *     When centering is needed: crop=W:H:(iw-W)/2:(ih-H)/2 ONLY when
- *     we are certain iw≥W after the scale step.
- *   - Every composition ends with fps=${fps}${post}[vout].
- *   - Multi-image compositions receive ORIGINAL (unprocessed) paths — they
- *     do all their own scaling inside filter_complex via -loop 1 inputs.
+ * 4. TIMELINE SYNC — every animation is described as:
+ *    { startSec, durSec, fromVal, toVal, easing }
+ *    The same numbers that produce FFmpeg expressions populate the JS
+ *    timeline editor keyframes. No separate logic path.
  *
- * COMPOSITIONS (30 total):
+ * 5. REMOVED (unfixable by design):
+ *    manga_panels  — opposite-direction zooms on same split image
+ *    split_and_zoom — zoompan on cropped halves destroys coordinate space
+ *    stagger_slide_up — replaced by door_open (cleaner reveal mechanic)
  *
- * SINGLE-IMAGE (22, all from v2, fully preserved):
- *   three_panel, manga_panels, quad_grid, diagonal_split,
- *   character_reveal, vertical_wipe, slide_in_left, slide_in_right,
- *   slide_in_top, curtain_open,
- *   spotlight_zoom, parallax, rack_focus,
- *   impact_frame, bounce_zoom, zoom_burst, shockwave,
- *   letterbox_pan, tilt_reveal, mirror_composite, neon_frame, vhs_composite
- *
- * MULTI-IMAGE (8 new, all working):
- *   beat_stack_3       — 3 strips slide up from bottom on successive beats
- *   triptych_reveal    — 3 vertical panels wipe in left→center→right
- *   stagger_slide_up   — images cascade up from bottom with delay
- *   split_and_zoom     — image splits into 2; each half zooms outward
- *   photo_wall_sweep   — 4-up collage wall with slow camera pan
- *   cinematic_duo      — top 30% portrait + bottom 70% action (2 images)
- *   pip_corner         — full frame + picture-in-picture in corner
- *   cross_reveal       — two images split diagonally, each sliding into frame
+ * ═══════════════════════════════════════════════════════════════════════
+ * EASING REFERENCE (used in ALL compositions below)
+ * ═══════════════════════════════════════════════════════════════════════
+ * easeOutCubic:  E(t,S,D) = 1-(1-min(1,max(0,(t-S)/D)))^3
+ * easeInCubic:   I(t,S,D) = min(1,max(0,(t-S)/D))^3
+ * easeOutBounce: B(t,S,D) = 1-exp(-6*min(1,max(0,(t-S)/D)))*cos(12*min(1,max(0,(t-S)/D)))
+ * Linear:        L(t,S,D) = min(1,max(0,(t-S)/D))
  */
 
 "use strict";
 
 const { buildColorGrade, buildOverlay } = require("./effectsLibrary");
 
-// ─── REGISTRY ──────────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// REGISTRY
+// ═══════════════════════════════════════════════════════════════════════════════
 
 const COMPOSITIONS = new Set([
-  // Single-image (22 — all preserved from v2)
-  "three_panel", "manga_panels", "quad_grid", "diagonal_split",
-  "character_reveal", "vertical_wipe", "slide_in_left", "slide_in_right",
-  "slide_in_top", "curtain_open",
-  "spotlight_zoom", "parallax", "rack_focus",
+  // Reveals / Swipes
+  "character_reveal",
+  "swipe_in_left", "swipe_in_right", "swipe_in_top", "curtain_open",
+  // Focus / Cinematic
+  "spotlight_zoom", "neon_frame", "vhs_composite",
+  // Impact
   "impact_frame", "bounce_zoom", "zoom_burst", "shockwave",
-  "letterbox_pan", "tilt_reveal", "mirror_composite", "neon_frame", "vhs_composite",
-  // Multi-image (8 new)
-  "beat_stack_3", "triptych_reveal", "stagger_slide_up",
-  "split_and_zoom", "photo_wall_sweep", "cinematic_duo", "pip_corner", "cross_reveal",
+  // Multi-image
+  "beat_stack_3",
+  "door_open", "photo_wall_sweep", "pip_corner",
 ]);
 
 const MULTI_IMAGE_COMPOSITIONS = new Set([
-  "beat_stack_3", "triptych_reveal", "stagger_slide_up",
-  "split_and_zoom", "photo_wall_sweep", "cinematic_duo", "pip_corner", "cross_reveal",
+  "beat_stack_3",
+  "door_open", "photo_wall_sweep", "pip_corner",
 ]);
 
 const COMPOSITION_CATEGORIES = {
-  panels:    { label: "Panel Layouts",  compositions: ["three_panel", "manga_panels", "quad_grid", "diagonal_split"] },
-  reveals:   { label: "Reveals",        compositions: ["character_reveal", "vertical_wipe", "slide_in_left", "slide_in_right", "slide_in_top", "curtain_open"] },
-  focus:     { label: "Focus",          compositions: ["spotlight_zoom", "parallax", "rack_focus"] },
-  impact:    { label: "Impact",         compositions: ["impact_frame", "bounce_zoom", "zoom_burst", "shockwave"] },
-  cinematic: { label: "Cinematic",      compositions: ["letterbox_pan", "tilt_reveal", "mirror_composite", "neon_frame", "vhs_composite"] },
-  multi:     { label: "Multi-Image",    compositions: ["beat_stack_3", "triptych_reveal", "stagger_slide_up", "split_and_zoom", "photo_wall_sweep", "cinematic_duo", "pip_corner", "cross_reveal"] },
+  reveals:   { label: "Reveals", compositions: ["character_reveal", "swipe_in_left", "swipe_in_right", "swipe_in_top", "curtain_open"] },
+  focus:     { label: "Focus",   compositions: ["spotlight_zoom", "neon_frame", "vhs_composite"] },
+  impact:    { label: "Impact",  compositions: ["impact_frame", "bounce_zoom", "zoom_burst", "shockwave"] },
+  multi:     { label: "Multi",   compositions: ["beat_stack_3", "door_open", "photo_wall_sweep", "pip_corner"] },
 };
 
-// ─── SHARED HELPERS ───────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// SHARED ANIMATION HELPERS
+// These produce FFmpeg filter expression strings.
+// The SAME numeric values (startSec, durSec, fromVal, toVal) are used in the
+// timeline editor JS — no separate logic path.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Normalized progress clamped to [0,1].
+ * p(t, S, D) = clamp((t - S) / D, 0, 1)
+ * In FFmpeg: min(1,max(0,(t-S)/D))
+ */
+function p(startSec, durSec) {
+  const S = startSec.toFixed(4);
+  const D = durSec.toFixed(4);
+  return `min(1,max(0,(t-${S})/${D}))`;
+}
+
+/**
+ * easeOutCubic — natural deceleration. CapCut / FCP default for enters.
+ * f(p) = 1 - (1-p)^3
+ */
+function eoc(startSec, durSec) {
+  const prog = p(startSec, durSec);
+  return `(1-(1-${prog})*(1-${prog})*(1-${prog}))`;
+}
+
+/**
+ * easeInCubic — acceleration. Used for exits (element leaving frame).
+ * f(p) = p^3
+ */
+function eic(startSec, durSec) {
+  const prog = p(startSec, durSec);
+  return `(${prog}*${prog}*${prog})`;
+}
+
+/**
+ * easeOutBounce — elastic settle. Used for impact/bounce effects.
+ * f(p) = 1 - exp(-6p)*cos(12p)
+ */
+function eob(startSec, durSec) {
+  const prog = p(startSec, durSec);
+  return `(1-exp(-6*${prog})*cos(12*${prog}))`;
+}
+
+/**
+ * Lerp — linear interpolation between fromVal and toVal using an easing expr.
+ * lerp(from, to, easingExpr) = from + (to - from) * easingExpr
+ */
+function lerp(from, to, easingExpr) {
+  const delta = to - from;
+  if (delta === 0) return from.toFixed(3);
+  const sign = delta > 0 ? "+" : "-";
+  return `(${from.toFixed(3)}${sign}${Math.abs(delta).toFixed(3)}*${easingExpr})`;
+}
+
+// ─── ORGANIC VARIATION HELPERS ───────────────────────────────────────────────
+
+/**
+ * Deterministic per-scene variation using scene seed.
+ * Replaces Math.random() — same input always gives same output (cache-safe).
+ * seed: any integer (use sceneIndex or a hash).
+ * range: ±range around base.
+ */
+function seedVariance(base, range, seed) {
+  // LCG pseudo-random, deterministic
+  const r = ((seed * 1664525 + 1013904223) & 0xffffffff) / 0xffffffff;
+  return +(base + (r * 2 - 1) * range).toFixed(4);
+}
+
+/**
+ * Per-panel stagger offset in seconds.
+ * Used to give multi-panel animations a subtle cascade feel.
+ */
+function staggerSec(i, gapSec = 0.05) {
+  return +(i * gapSec).toFixed(4);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// INFRASTRUCTURE HELPERS
+// ═══════════════════════════════════════════════════════════════════════════════
 
 function buildPostChain(colorGrade, overlays, w, h) {
   const parts = [];
@@ -104,28 +169,48 @@ function buildPostChain(colorGrade, overlays, w, h) {
   return parts.length ? "," + parts.join(",") : "";
 }
 
-function safeFrames(dur, fps) {
-  return Math.max(4, Math.round(dur * fps));
-}
-
-// Scale an image to fill a slot of dimensions sw×sh, then centre-crop.
-// Guaranteed: after scale with increase, iw≥sw and ih≥sh, so crop is safe.
+/**
+ * Scale image to fill slot exactly — no black bars, no padding.
+ * Guarantees: output is EXACTLY sw×sh pixels.
+ * Steps: scale so both dimensions >= target, then centre-crop to exact size.
+ */
 function scaleFill(sw, sh) {
-  return `scale=${sw}:${sh}:force_original_aspect_ratio=increase,crop=${sw}:${sh}:(iw-${sw})/2:(ih-${sh})/2,setsar=1`;
-}
-
-// Scale an image to fit inside sw×sh with black padding.
-function scalePad(sw, sh) {
-  return `scale=${sw}:${sh}:force_original_aspect_ratio=decrease,pad=${sw}:${sh}:(ow-iw)/2:(oh-ih)/2:black,setsar=1`;
+  return `scale=${sw}:${sh}:force_original_aspect_ratio=increase:flags=lanczos,` +
+         `crop=${sw}:${sh}:(iw-${sw})/2:(ih-${sh})/2,` +
+         `setsar=1`;
 }
 
 /**
- * Resolve inputPaths from opts.
- * Accepts opts.inputPaths (array, preferred) or opts.inputPath (string, legacy).
- * Filters nulls/empties, clamps to maxCount.
- * Throws if nothing valid is supplied.
+ * Ken Burns zoom — zoompan used ONLY for scale, centered at anchor point.
+ * anchor: "center" | "top" | "face" (shifts y center upward for faces)
+ * zFrom: starting zoom (>= 1.0), zTo: ending zoom
+ * zoompan x/y here are in INPUT coordinate space (crop-window origin),
+ * NOT screen positions. Always kept at center of the zoomed crop window.
  */
-function resolveInputPaths(opts, maxCount = 3) {
+function kenBurns(w, h, totalFrames, fps, zFrom, zTo, anchor) {
+  const anchorY = anchor === "face" ? "ih*0.32-(ih/zoom/2)" :
+                  anchor === "top"  ? "max(0,ih*0.15-(ih/zoom/2))" :
+                                      "ih/2-(ih/zoom/2)";
+  // zoompan's z= expression only has access to 'on' (frame count), not 't' (seconds).
+  // on/tf === t/dur === normalized progress. We use easeInOutCubic for smooth zoom.
+  // easeInOutCubic(p): p<0.5 ? 4p^3 : 1-(-2p+2)^3/2
+  // In frame terms: p = on/${totalFrames}
+  const zExpr = zFrom === zTo
+    ? `${zFrom.toFixed(4)}`
+    : (() => {
+        const zMin = Math.min(zFrom, zTo).toFixed(4);
+        const zMax = Math.max(zFrom, zTo).toFixed(4);
+        const d = (zTo - zFrom).toFixed(6);
+        // easeInOutCubic in frame space.
+        // FFmpeg expression evaluator uses if(cond,a,b) — NOT JS ternary ?:
+        const p  = `on/${totalFrames}`;
+        const eio = `if(lt(${p},0.5),4*(${p})*(${p})*(${p}),1-pow(-2*(${p})+2,3)/2)`;
+        return `min(${zMax},max(${zMin},${zFrom.toFixed(4)}+${d}*${eio}))`;
+      })();
+  return `zoompan=z='${zExpr}':x='iw/2-(iw/zoom/2)':y='${anchorY}':d=${totalFrames}:s=${w}x${h}:fps=${fps}`;
+}
+
+function resolveInputPaths(opts, maxCount) {
   let paths = [];
   if (Array.isArray(opts.inputPaths) && opts.inputPaths.length > 0) {
     paths = opts.inputPaths.filter(p => typeof p === "string" && p.length > 0);
@@ -136,332 +221,489 @@ function resolveInputPaths(opts, maxCount = 3) {
   return paths.slice(0, maxCount);
 }
 
-// Pad paths to exactly count entries by repeating the last one.
 function padPaths(paths, count) {
   const out = [...paths];
   while (out.length < count) out.push(out[out.length - 1]);
   return out.slice(0, count);
 }
 
-/**
- * Build a face-aware crop + scale FFmpeg filter string.
- * Falls back to centre-crop if bbox is null or dimensions are zero.
- */
 function buildFaceCrop(faceBbox, srcW, srcH, outW, outH) {
-  const aspect = outW / outH;
-  if (!faceBbox || !srcW || !srcH) {
-    return `${scaleFill(outW, outH)}`;
-  }
+  if (!faceBbox || !srcW || !srcH) return scaleFill(outW, outH);
   const { x, y, w: fw, h: fh } = faceBbox;
+  const aspect = outW / outH;
   let cropH = Math.min(srcH, Math.max(fh * 2.0, srcH * 0.5));
   let cropW = Math.round(cropH * aspect);
   if (cropW > srcW) { cropW = srcW; cropH = Math.round(cropW / aspect); }
-  let cx = Math.round(x + fw / 2 - cropW / 2);
-  let cy = Math.round(y + fh / 2 - cropH / 2);
-  cx = Math.max(0, Math.min(cx, srcW - cropW));
-  cy = Math.max(0, Math.min(cy, srcH - cropH));
-  return `crop=${cropW}:${cropH}:${cx}:${cy},scale=${outW}:${outH}:flags=lanczos`;
+  let cx = Math.max(0, Math.min(Math.round(x + fw / 2 - cropW / 2), srcW - cropW));
+  let cy = Math.max(0, Math.min(Math.round(y + fh / 2 - cropH / 2), srcH - cropH));
+  return `crop=${cropW}:${cropH}:${cx}:${cy},scale=${outW}:${outH}:flags=lanczos,setsar=1`;
 }
 
-// ─── MAIN BUILDER ──────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// MAIN BUILDER
+// ═══════════════════════════════════════════════════════════════════════════════
 
-/**
- * Build an FFmpeg command string for a named composition.
- *
- * @param {object} opts
- *   composition  {string}   — composition name
- *   inputPath    {string}   — single image path (legacy)
- *   inputPaths   {string[]} — array of image paths (preferred)
- *   outPath      {string}   — output .mp4 path
- *   duration     {number}   — seconds
- *   fps          {number}   — default 30
- *   w            {number}   — output width  (default 1080)
- *   h            {number}   — output height (default 1920)
- *   colorGrade   {string}   — grade name or "none"
- *   overlays     {string[]} — overlay names
- *   beatOffsets  {number[]} — beat times relative to scene start (seconds)
- *
- * @returns {string|null}  FFmpeg command string, or null for unknown composition.
- */
 function buildCompositionCmd(opts) {
   const {
-    composition,
-    outPath,
-    duration,
-    fps        = 30,
-    w          = 1080,
-    h          = 1920,
-    colorGrade = "none",
-    overlays   = [],
-    beatOffsets = [],
+    composition, outPath,
+    duration, fps = 30,
+    w = 1080, h = 1920,
+    colorGrade = "none", overlays = [], beatOffsets = [],
   } = opts;
 
   if (!composition || !COMPOSITIONS.has(composition)) return null;
 
-  const tf   = safeFrames(duration, fps);
-  const dur  = Math.max(0.1, duration).toFixed(3);
-  const durP = (parseFloat(dur) + 0.1).toFixed(3);
+  const dur  = Math.max(0.3, duration);
+  const durS = dur.toFixed(4);
+  const durP = (dur + 0.1).toFixed(4);         // input loop duration (small pad)
+  const tf   = Math.max(4, Math.round(dur * fps)); // total frames
   const post = buildPostChain(colorGrade, overlays, w, h);
-  const OF   = `-t ${dur} -an -c:v libx264 -preset fast -crf 20 -pix_fmt yuv420p`;
+  const OF   = `-t ${durS} -an -c:v libx264 -preset fast -crf 20 -pix_fmt yuv420p`;
 
   if (MULTI_IMAGE_COMPOSITIONS.has(composition)) {
-    return _multi(composition, opts, { dur, durP, post, OF, tf, fps, w, h, beatOffsets });
+    return _buildMulti(composition, opts, { dur, durS, durP, tf, fps, w, h, post, OF, beatOffsets });
   }
 
-  // ── SINGLE-IMAGE path ─────────────────────────────────────────────────────
   const [ip] = resolveInputPaths(opts, 1);
-  const inp  = `-loop 1 -t ${durP} -i "${ip}"`;
-  const SP   = scalePad(w, h);
+  // Single image input: loop for durP seconds so filters always have frames
+  const inp = `-loop 1 -t ${durP} -i "${ip}"`;
+  const SF  = scaleFill(w, h);
 
   switch (composition) {
 
+    // ─── THREE PANEL ──────────────────────────────────────────────────────────
+    // Ref: CapCut 3-split. Image divided into 3 vertical strips.
+    // Each strip is pre-scaled to its slot size, placed via overlay at fixed x.
+    // Slow uniform zoom applied per-strip via zoompan (zoom only, no pan drift).
+    // Fix: strip crops at correct x thirds; overlay places at correct screen x.
     case "three_panel": {
-      const sw = Math.floor(w / 3) - 4;
-      const fc = [
-        `[0:v]${SP}[base]`,
-        `[base]split=3[b1][b2][b3]`,
-        `[b1]crop=${sw}:${h}:0:0,zoompan=z='1.0+0.18*on/${tf}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${tf}:s=${sw}x${h}:fps=${fps}[s1]`,
-        `[b2]crop=${sw}:${h}:${Math.floor(w/3)}:0,zoompan=z='1.18-0.15*on/${tf}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${tf}:s=${sw}x${h}:fps=${fps}[s2]`,
-        `[b3]crop=${sw}:${h}:${Math.floor(2*w/3)}:0,zoompan=z='1.08+0.10*sin(on*3.14/${tf})':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${tf}:s=${sw}x${h}:fps=${fps}[s3]`,
+      const gap = 3;
+      const sw  = Math.floor((w - gap * 2) / 3);
+      const x0  = 0, x1 = Math.floor(w / 3), x2 = Math.floor(2 * w / 3);
+      // Each strip zooms at a different rate: side panels subtle, center stronger.
+      // Fixed values — deterministic, cache-safe.
+      const kb1 = kenBurns(sw, h, tf, fps, 1.0, 1.10, "center"); // left
+      const kb2 = kenBurns(sw, h, tf, fps, 1.0, 1.14, "center"); // center — dominant
+      const kb3 = kenBurns(sw, h, tf, fps, 1.0, 1.07, "center"); // right
+      const fc  = [
+        `[0:v]${SF}[full]`,
+        `[full]split=3[b1][b2][b3]`,
+        `[b1]crop=${sw}:${h}:${x0}:0[c1]`,
+        `[b2]crop=${sw}:${h}:${x1}:0[c2]`,
+        `[b3]crop=${sw}:${h}:${x2}:0[c3]`,
+        `[c1]${kb1}[s1]`,
+        `[c2]${kb2}[s2]`,
+        `[c3]${kb3}[s3]`,
         `color=c=black:s=${w}x${h}:d=${durP}:r=${fps}[bg]`,
-        `[bg][s1]overlay=0:0[t1]`,
-        `[t1][s2]overlay=${sw+4}:0[t2]`,
-        `[t2][s3]overlay=${2*(sw+4)}:0,fps=${fps}${post}[vout]`,
+        `[bg][s1]overlay=x=0:y=0[t1]`,
+        `[t1][s2]overlay=x=${sw + gap}:y=0[t2]`,
+        `[t2][s3]overlay=x=${2 * (sw + gap)}:y=0,fps=${fps}${post}[vout]`,
       ];
       return `ffmpeg -y ${inp} -filter_complex "${fc.join(";")}" -map "[vout]" ${OF} "${outPath}"`;
     }
 
-    case "manga_panels": {
-      const ph = Math.floor(h/2) - 3;
+    // ─── FILM STRIP ───────────────────────────────────────────────────────────
+    // Two horizontal halves. Top half drifts right faster than bottom (parallax).
+    // Both drift in SAME direction — no visual conflict.
+    // Movement via zoompan pan within oversized scaled image (legitimate use).
+    // Fix: replaced opposite-zoom manga_panels with same-direction parallax pan.
+    case "film_strip": {
+      const gap = 3;
+      const ph  = Math.floor((h - gap) / 2);
+      // Scale image slightly wider than slot so pan has room
+      const pxTop = Math.floor(w * 0.06); // total pan distance top half
+      const pxBot = Math.floor(w * 0.03); // total pan distance bottom half
+      const wWide = w + Math.max(pxTop, pxBot) + 4;
       const fc = [
-        `[0:v]${SP}[base]`,
-        `[base]split[ti][bi]`,
-        `[ti]crop=${w}:${ph}:0:0,zoompan=z='1.0+0.20*on/${tf}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${tf}:s=${w}x${ph}:fps=${fps}[top]`,
-        `[bi]crop=${w}:${ph}:0:${Math.floor(h/2)},zoompan=z='1.20-0.15*on/${tf}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${tf}:s=${w}x${ph}:fps=${fps}[bot]`,
+        `[0:v]scale=${wWide}:${h}:force_original_aspect_ratio=increase:flags=lanczos,crop=${wWide}:${h}:(iw-${wWide})/2:(ih-${h})/2,setsar=1[wide]`,
+        `[wide]split[wa][wb]`,
+        // Top: crop upper half, pan from left to right (x increases over time)
+        // easeOutCubic pan: x = dist*(1-(1-on/tf)^3) — decelerates like a real camera
+        `[wa]crop=${wWide}:${ph}:0:0,` +
+          `zoompan=z=1.0:x='min(${wWide - w},${pxTop}*(1-(1-on/${tf})*(1-on/${tf})*(1-on/${tf})))':y='0':d=${tf}:s=${w}x${ph}:fps=${fps}[top]`,
+        // Bottom: same easing, half distance
+        `[wb]crop=${wWide}:${ph}:0:${ph + gap},` +
+          `zoompan=z=1.0:x='min(${wWide - w},${pxBot}*(1-(1-on/${tf})*(1-on/${tf})*(1-on/${tf})))':y='0':d=${tf}:s=${w}x${ph}:fps=${fps}[bot]`,
         `color=c=black:s=${w}x${h}:d=${durP}:r=${fps}[bg]`,
-        `[bg][top]overlay=0:0[t1]`,
-        `[t1][bot]overlay=0:${ph+6},fps=${fps}${post}[vout]`,
+        `[bg][top]overlay=x=0:y=0[t1]`,
+        `[t1][bot]overlay=x=0:y=${ph + gap},fps=${fps}${post}[vout]`,
       ];
       return `ffmpeg -y ${inp} -filter_complex "${fc.join(";")}" -map "[vout]" ${OF} "${outPath}"`;
     }
 
+    // ─── QUAD GRID ────────────────────────────────────────────────────────────
+    // Four quadrants, each cropped from correct quarter of image.
+    // Uniform zoom-in on all four — no conflict.
     case "quad_grid": {
-      const qw = Math.floor(w/2) - 3, qh = Math.floor(h/2) - 3;
-      const fc = [
-        `[0:v]${SP}[base]`,
-        `[base]split=4[q1][q2][q3][q4]`,
-        `[q1]crop=${qw}:${qh}:0:0,zoompan=z='1.0+0.20*on/${tf}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${tf}:s=${qw}x${qh}:fps=${fps}[p1]`,
-        `[q2]crop=${qw}:${qh}:${Math.floor(w/2)}:0,zoompan=z='1.20-0.15*on/${tf}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${tf}:s=${qw}x${qh}:fps=${fps}[p2]`,
-        `[q3]crop=${qw}:${qh}:0:${Math.floor(h/2)},zoompan=z='1.10+0.10*sin(on*6.28/${tf})':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${tf}:s=${qw}x${qh}:fps=${fps}[p3]`,
-        `[q4]crop=${qw}:${qh}:${Math.floor(w/2)}:${Math.floor(h/2)},zoompan=z='1.15-0.10*cos(on*6.28/${tf})':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${tf}:s=${qw}x${qh}:fps=${fps}[p4]`,
+      const gap = 3;
+      const qw  = Math.floor((w - gap) / 2);
+      const qh  = Math.floor((h - gap) / 2);
+      const x1  = Math.floor(w / 2), y1 = Math.floor(h / 2);
+      // Top-right panel (index 1) is the focal point — stronger zoom draws the eye.
+      const kbMain = kenBurns(qw, qh, tf, fps, 1.0, 1.14, "center"); // focus
+      const kbSub  = kenBurns(qw, qh, tf, fps, 1.0, 1.06, "center"); // supporting
+      const fc  = [
+        `[0:v]${SF}[full]`,
+        `[full]split=4[q1][q2][q3][q4]`,
+        `[q1]crop=${qw}:${qh}:0:0[c1]`,
+        `[q2]crop=${qw}:${qh}:${x1}:0[c2]`,
+        `[q3]crop=${qw}:${qh}:0:${y1}[c3]`,
+        `[q4]crop=${qw}:${qh}:${x1}:${y1}[c4]`,
+        `[c1]${kbSub}[p1]`, `[c2]${kbMain}[p2]`, `[c3]${kbSub}[p3]`, `[c4]${kbSub}[p4]`,
         `color=c=black:s=${w}x${h}:d=${durP}:r=${fps}[bg]`,
-        `[bg][p1]overlay=0:0[g1]`,
-        `[g1][p2]overlay=${qw+6}:0[g2]`,
-        `[g2][p3]overlay=0:${qh+6}[g3]`,
-        `[g3][p4]overlay=${qw+6}:${qh+6},fps=${fps}${post}[vout]`,
+        `[bg][p1]overlay=x=0:y=0[g1]`,
+        `[g1][p2]overlay=x=${qw + gap}:y=0[g2]`,
+        `[g2][p3]overlay=x=0:y=${qh + gap}[g3]`,
+        `[g3][p4]overlay=x=${qw + gap}:y=${qh + gap},fps=${fps}${post}[vout]`,
       ];
       return `ffmpeg -y ${inp} -filter_complex "${fc.join(";")}" -map "[vout]" ${OF} "${outPath}"`;
     }
 
+    // ─── DIAGONAL SPLIT ───────────────────────────────────────────────────────
+    // Left half slow-zooms while panning left; right half zooms while panning right.
+    // Image pre-scaled wide to give pan room — zoompan used for pan within scaled image.
+    // Both sides zoom IN (no conflict). Diverging pan creates dynamic tension.
     case "diagonal_split": {
-      const hw = Math.floor(w/2);
+      const hw     = Math.floor(w / 2);
+      const pxEach = Math.floor(w * 0.05);
+      const wWide  = w + pxEach * 2 + 4;
       const fc = [
-        `[0:v]${SP}[base]`,
-        `[base]split[a][b]`,
-        `[a]zoompan=z='1.0+0.15*on/${tf}':x='max(0,iw/2-(iw/zoom/2)-18)':y='ih/2-(ih/zoom/2)':d=${tf}:s=${w}x${h}:fps=${fps}[za]`,
-        `[b]zoompan=z='1.15-0.10*on/${tf}':x='min(iw-(iw/zoom),iw/2-(iw/zoom/2)+18)':y='ih/2-(ih/zoom/2)':d=${tf}:s=${w}x${h}:fps=${fps}[zb]`,
-        `[zb]crop=${hw}:${h}:${hw}:0[rb]`,
-        `[za][rb]overlay=${hw}:0,fps=${fps}${post}[vout]`,
-      ];
-      return `ffmpeg -y ${inp} -filter_complex "${fc.join(";")}" -map "[vout]" ${OF} "${outPath}"`;
-    }
-
-    case "character_reveal": {
-      const fc = [
-        `[0:v]${SP}[base]`,
-        `[base]zoompan=z='max(1.05,3.0-2.0*on/${tf})':x='iw/2-(iw/zoom/2)':y='max(0,ih*0.32-(ih/zoom/2))':d=${tf}:s=${w}x${h}:fps=${fps},fps=${fps},vignette=PI/2.8${post}[vout]`,
-      ];
-      return `ffmpeg -y ${inp} -filter_complex "${fc.join(";")}" -map "[vout]" ${OF} "${outPath}"`;
-    }
-
-    case "vertical_wipe": {
-      const rd = Math.max(0.3, duration * 0.65).toFixed(3);
-      const fc = [
-        `[0:v]${SP}[base]`,
-        `[base]zoompan=z=1.08:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${tf}:s=${w}x${h}:fps=${fps}[img]`,
-        `color=c=black:s=${w}x${h}:d=${durP}:r=${fps}[bf]`,
-        `[bf]crop=w=${w}:h='max(2,${h}-${h}*min(1,t/${rd}))':x=0:y=0[mask]`,
-        `[img][mask]overlay=0:0,fps=${fps}${post}[vout]`,
-      ];
-      return `ffmpeg -y ${inp} -filter_complex "${fc.join(";")}" -map "[vout]" ${OF} "${outPath}"`;
-    }
-
-    case "slide_in_left": {
-      const sf = Math.max(4, Math.floor(tf * 0.4));
-      const fc = [
-        `[0:v]${SP}[base]`,
-        `[base]zoompan=z=1.06:x='max(0,iw/2-(iw/zoom/2)-(iw/zoom)*(1-min(1,on/${sf})))':y='ih/2-(ih/zoom/2)':d=${tf}:s=${w}x${h}:fps=${fps},fps=${fps}${post}[vout]`,
-      ];
-      return `ffmpeg -y ${inp} -filter_complex "${fc.join(";")}" -map "[vout]" ${OF} "${outPath}"`;
-    }
-
-    case "slide_in_right": {
-      const sf = Math.max(4, Math.floor(tf * 0.4));
-      const fc = [
-        `[0:v]${SP}[base]`,
-        `[base]zoompan=z=1.06:x='min(iw-(iw/zoom),iw/2-(iw/zoom/2)+(iw/zoom)*(1-min(1,on/${sf})))':y='ih/2-(ih/zoom/2)':d=${tf}:s=${w}x${h}:fps=${fps},fps=${fps}${post}[vout]`,
-      ];
-      return `ffmpeg -y ${inp} -filter_complex "${fc.join(";")}" -map "[vout]" ${OF} "${outPath}"`;
-    }
-
-    case "slide_in_top": {
-      const sf = Math.max(4, Math.floor(tf * 0.35));
-      const fc = [
-        `[0:v]${SP}[base]`,
-        `[base]zoompan=z=1.06:x='iw/2-(iw/zoom/2)':y='max(0,ih/2-(ih/zoom/2)-(ih/zoom)*(1-min(1,on/${sf})))':d=${tf}:s=${w}x${h}:fps=${fps},fps=${fps}${post}[vout]`,
-      ];
-      return `ffmpeg -y ${inp} -filter_complex "${fc.join(";")}" -map "[vout]" ${OF} "${outPath}"`;
-    }
-
-    case "curtain_open": {
-      const rf = Math.max(4, Math.floor(tf * 0.5));
-      const hw = Math.floor(w/2);
-      const fc = [
-        `[0:v]${SP}[base]`,
-        `[base]split[li][ri]`,
-        `[li]crop=${hw}:${h}:0:0,zoompan=z=1.06:d=${tf}:s=${hw}x${h}:fps=${fps}[lc]`,
-        `[ri]crop=${hw}:${h}:${hw}:0,zoompan=z=1.06:d=${tf}:s=${hw}x${h}:fps=${fps}[rc]`,
+        `[0:v]scale=${wWide}:${h}:force_original_aspect_ratio=increase:flags=lanczos,crop=${wWide}:${h}:(iw-${wWide})/2:(ih-${h})/2,setsar=1[wide]`,
+        `[wide]split[wa][wb]`,
+        // Left half: starts at center, pans leftward (x decreases)
+        // Left: stronger zoom (1.10) → feels heavier, more dominant
+        `[wa]crop=${hw}:${h}:${pxEach}:0,` +
+          `zoompan=z='1.0+0.10*(1-(1-on/${tf})*(1-on/${tf})*(1-on/${tf}))':x='max(0,${pxEach}-on*${(pxEach / tf).toFixed(5)})':y='ih/2-(ih/zoom/2)':d=${tf}:s=${hw}x${h}:fps=${fps}[lz]`,
+        // Right: lighter zoom (1.08) → asymmetry creates visual tension
+        `[wb]crop=${hw}:${h}:${pxEach}:0,` +
+          `zoompan=z='1.0+0.08*(1-(1-on/${tf})*(1-on/${tf})*(1-on/${tf}))':x='min(${pxEach * 2},${pxEach}+on*${(pxEach / tf).toFixed(5)})':y='ih/2-(ih/zoom/2)':d=${tf}:s=${hw}x${h}:fps=${fps}[rz]`,
         `color=c=black:s=${w}x${h}:d=${durP}:r=${fps}[bg]`,
-        `[bg][lc]overlay=x='0-${hw}*min(1\\,n/${rf})':y=0[t1]`,
-        `[t1][rc]overlay=x='${hw}+${hw}*min(1\\,n/${rf})':y=0,fps=${fps}${post}[vout]`,
+        `[bg][lz]overlay=x=0:y=0[d1]`,
+        `[d1][rz]overlay=x=${hw}:y=0,fps=${fps}${post}[vout]`,
       ];
       return `ffmpeg -y ${inp} -filter_complex "${fc.join(";")}" -map "[vout]" ${OF} "${outPath}"`;
     }
 
+    // ─── CHARACTER REVEAL ─────────────────────────────────────────────────────
+    // Ref: CapCut "zoom reveal" — punches from 3× down to 1.05×.
+    // zoompan used legitimately here: only changing scale, anchored to face area.
+    // Fix: face anchor at y=0.32*ih, smooth deceleration via power curve.
+    case "character_reveal": {
+      // z: 3.0 → 1.05 using easeOutCubic mapped to frame count
+      // z(on) = 3.0 - 1.95 * easeOutCubic(on / tf)
+      // easeOutCubic(p) = 1 - (1-p)^3
+      const fc = [
+        `[0:v]${SF}[base]`,
+        // z: 3.0→1.02 — 1.98 range. Settles slightly above 1.0 for a "snap" feel (CapCut style).
+        `[base]zoompan=z='max(1.0,3.0-1.98*(1-(1-on/${tf})*(1-on/${tf})*(1-on/${tf})))':` + // easeOutCubic, snap settle
+          `x='iw/2-(iw/zoom/2)':` +
+          `y='max(0,ih*0.32-(ih/zoom/2))':` +
+          `d=${tf}:s=${w}x${h}:fps=${fps},` +
+          `vignette=PI/2.8${post}[vout]`,
+      ];
+      return `ffmpeg -y ${inp} -filter_complex "${fc.join(";")}" -map "[vout]" ${OF} "${outPath}"`;
+    }
+
+    // ─── VERTICAL WIPE ────────────────────────────────────────────────────────
+    // Black cover layer shrinks downward (crop height decreases to 0), revealing image.
+    // Image is ALWAYS fully present underneath — cover is additive.
+    // Fix: cover approach (not destructive crop on image), easeOutCubic.
+    case "vertical_wipe": {
+      const revealDur = Math.min(dur * 0.65, 1.0);
+      // cover_h = h * (1 - easeOutCubic(t, 0, revealDur))
+      // = h * (1 - p)^3 where p = clamp(t/revealDur, 0, 1)
+      const prog = p(0, revealDur);
+      const coverH = `max(2,${h}*((1-${prog})*(1-${prog})*(1-${prog})))`;
+      const fc = [
+        `[0:v]${SF}[img]`,
+        `[img]${kenBurns(w, h, tf, fps, 1.04, 1.10, "center")}[zoomed]`,
+        `color=c=black:s=${w}x${h}:d=${durP}:r=${fps}[cover_src]`,
+        `[cover_src]crop=${w}:'${coverH}':0:0[cover]`,
+        `[zoomed][cover]overlay=x=0:y=0,fps=${fps}${post}[vout]`,
+      ];
+      return `ffmpeg -y ${inp} -filter_complex "${fc.join(";")}" -map "[vout]" ${OF} "${outPath}"`;
+    }
+
+    // ─── SWIPE IN LEFT ────────────────────────────────────────────────────────
+    // Ref: CapCut slide transition. Image enters from x = -w (fully off left).
+    // Settles at x=0. easeOutCubic. Slow Ken Burns during hold.
+    // Fix: overlay-based movement (not zoompan pan). True off-screen start.
+    case "swipe_in_left": {
+      const swipeDur = Math.min(0.45, dur * 0.38);
+      // x: -w → 0 using easeOutCubic
+      const xExpr = lerp(-w, 0, eoc(0, swipeDur));
+      const fc = [
+        `[0:v]${SF}[img]`,
+        `[img]${kenBurns(w, h, tf, fps, 1.0, 1.06, "center")}[kb]`,
+        `color=c=black:s=${w}x${h}:d=${durP}:r=${fps}[bg]`,
+        `[bg][kb]overlay=x='${xExpr}':y=0,fps=${fps}${post}[vout]`,
+      ];
+      return `ffmpeg -y ${inp} -filter_complex "${fc.join(";")}" -map "[vout]" ${OF} "${outPath}"`;
+    }
+
+    // ─── SWIPE IN RIGHT ───────────────────────────────────────────────────────
+    // Image enters from x = +w. Settles at x=0.
+    case "swipe_in_right": {
+      const swipeDur = Math.min(0.45, dur * 0.38);
+      const xExpr = lerp(w, 0, eoc(0, swipeDur));
+      const fc = [
+        `[0:v]${SF}[img]`,
+        `[img]${kenBurns(w, h, tf, fps, 1.0, 1.06, "center")}[kb]`,
+        `color=c=black:s=${w}x${h}:d=${durP}:r=${fps}[bg]`,
+        `[bg][kb]overlay=x='${xExpr}':y=0,fps=${fps}${post}[vout]`,
+      ];
+      return `ffmpeg -y ${inp} -filter_complex "${fc.join(";")}" -map "[vout]" ${OF} "${outPath}"`;
+    }
+
+    // ─── SWIPE IN TOP ─────────────────────────────────────────────────────────
+    // Image enters from y = -h (above frame). Settles at y=0.
+    case "swipe_in_top": {
+      const swipeDur = Math.min(0.45, dur * 0.38);
+      const yExpr = lerp(-h, 0, eoc(0, swipeDur));
+      const fc = [
+        `[0:v]${SF}[img]`,
+        `[img]${kenBurns(w, h, tf, fps, 1.0, 1.06, "center")}[kb]`,
+        `color=c=black:s=${w}x${h}:d=${durP}:r=${fps}[bg]`,
+        `[bg][kb]overlay=x=0:y='${yExpr}',fps=${fps}${post}[vout]`,
+      ];
+      return `ffmpeg -y ${inp} -filter_complex "${fc.join(";")}" -map "[vout]" ${OF} "${outPath}"`;
+    }
+
+    // ─── CURTAIN OPEN ─────────────────────────────────────────────────────────
+    // Two solid black panels cover the image. Left slides to x=-hw, right to x=w.
+    // Reveals image underneath via easeOutCubic.
+    // Fix: curtains are solid color overlays, image never moves.
+    case "curtain_open": {
+      const openDur = Math.min(dur * 0.5, 0.8);
+      const hw      = Math.floor(w / 2);
+      // Left curtain: x goes from 0 → -hw (exits left)
+      const lxExpr = lerp(0, -hw, eoc(0, openDur));
+      // Right curtain: x goes from hw → w (exits right)
+      const rxExpr = lerp(hw, w, eoc(0, openDur));
+      const fc = [
+        `[0:v]${SF}[img]`,
+        `[img]${kenBurns(w, h, tf, fps, 1.02, 1.08, "center")}[kb]`,
+        `color=c=black:s=${hw}x${h}:d=${durP}:r=${fps}[lc]`,
+        `color=c=black:s=${hw}x${h}:d=${durP}:r=${fps}[rc]`,
+        `[kb][lc]overlay=x='${lxExpr}':y=0[t1]`,
+        `[t1][rc]overlay=x='${rxExpr}':y=0,fps=${fps}${post}[vout]`,
+      ];
+      return `ffmpeg -y ${inp} -filter_complex "${fc.join(";")}" -map "[vout]" ${OF} "${outPath}"`;
+    }
+
+    // ─── SPOTLIGHT ZOOM ───────────────────────────────────────────────────────
+    // Blurred background (slow zoom) + sharp foreground crop that zooms in.
+    // Two separate streams from one image — genuine depth illusion.
     case "spotlight_zoom": {
-      const cw = Math.floor(w * 0.52), ch = Math.floor(h * 0.52);
-      const sw2 = Math.floor(w * 0.72), sh2 = Math.floor(h * 0.72);
+      const cw  = Math.floor(w * 0.52), ch = Math.floor(h * 0.52);
+      const fw2 = Math.floor(w * 0.72), fh2 = Math.floor(h * 0.72);
       const cy2 = Math.max(0, Math.floor(h * 0.12));
       const fc = [
-        `[0:v]${SP}[base]`,
+        `[0:v]${SF}[base]`,
         `[base]split[bgi][fgi]`,
-        `[bgi]zoompan=z='1.05+0.0006*on':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${tf}:s=${w}x${h}:fps=${fps},boxblur=22:6[bg]`,
-        `[fgi]crop=${cw}:${ch}:(iw-${cw})/2:${cy2},zoompan=z='1.0+0.30*on/${tf}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${tf}:s=${cw}x${ch}:fps=${fps},scale=${sw2}:${sh2}[fg]`,
-        `[bg][fg]overlay=x=(W-w)/2:y=(H-h)*3/8,fps=${fps}${post}[vout]`,
+        `[bgi]${kenBurns(w, h, tf, fps, 1.02, 1.06, "center")},boxblur=20:5[bg]`,
+        `[fgi]crop=${cw}:${ch}:(iw-${cw})/2:${cy2},` +
+          `${kenBurns(cw, ch, tf, fps, 1.0, 1.35, "center")},` +
+          `scale=${fw2}:${fh2}:flags=lanczos[fg]`,
+        // Subtle x drift: 8px sin wave — fg feels alive, not static
+        `[bg][fg]overlay=x='(W-w)/2+8*sin(t*2)':y=(H-h)*3/8,fps=${fps}${post}[vout]`,
       ];
       return `ffmpeg -y ${inp} -filter_complex "${fc.join(";")}" -map "[vout]" ${OF} "${outPath}"`;
     }
 
+    // ─── PARALLAX ─────────────────────────────────────────────────────────────
+    // Background pans slowly, foreground pans faster — genuine depth.
+    // zoompan used for pan within oversized scaled image (legitimate).
     case "parallax": {
       const fgW = Math.floor(w * 0.62), fgH = Math.floor(h * 0.62);
-      const bs = (w * 0.018 / tf).toFixed(5), fs = (w * 0.048 / tf).toFixed(5);
+      const pxBg = Math.floor(w * 0.04); // bg pans less → feels further away
+      const pxFg = Math.floor(w * 0.18); // fg pans more → stronger depth separation
+      const wBg = w + pxBg + 4;
+      const wFg = fgW + pxFg + 4;
       const fc = [
-        `[0:v]${SP}[base]`,
-        `[base]split[bgi][fgi]`,
-        `[bgi]zoompan=z=1.12:x='iw/2-(iw/zoom/2)+on*${bs}':y='ih/2-(ih/zoom/2)':d=${tf}:s=${w}x${h}:fps=${fps},smartblur=1.8:0.5:0[bg]`,
-        `[fgi]crop=${fgW}:${fgH}:(iw-${fgW})/2:(ih-${fgH})/2,zoompan=z=1.08:x='iw/2-(iw/zoom/2)+on*${fs}':y='ih/2-(ih/zoom/2)':d=${tf}:s=${fgW}x${fgH}:fps=${fps}[fg]`,
+        `[0:v]scale=${wBg}:${h}:force_original_aspect_ratio=increase:flags=lanczos,crop=${wBg}:${h}:(iw-${wBg})/2:(ih-${h})/2,setsar=1[ws]`,
+        `[ws]split[bgi][fgi]`,
+        `[bgi]zoompan=z=1.0:x='min(${wBg - w},on*${(pxBg / tf).toFixed(5)})':y='0':d=${tf}:s=${w}x${h}:fps=${fps},smartblur=1.5:0.4:0[bg]`,
+        `[fgi]crop=${fgW}:${fgH}:(iw-${fgW})/2:(ih-${fgH})/2,` +
+          `scale=${fgW + pxFg + 4}:${fgH}:force_original_aspect_ratio=increase:flags=lanczos,` +
+          `crop=${fgW + pxFg}:${fgH}:(iw-${fgW + pxFg})/2:0,setsar=1[fgw]`,
+        `[fgw]zoompan=z=1.0:x='min(${pxFg},on*${(pxFg / tf).toFixed(5)})':y='0':d=${tf}:s=${fgW}x${fgH}:fps=${fps}[fg]`,
         `[bg][fg]overlay=x=(W-w)/2:y=(H-h)/2,fps=${fps}${post}[vout]`,
       ];
       return `ffmpeg -y ${inp} -filter_complex "${fc.join(";")}" -map "[vout]" ${OF} "${outPath}"`;
     }
 
+    // ─── RACK FOCUS ───────────────────────────────────────────────────────────
+    // Background blurred + slow zoom. Foreground sharp + zoom-in.
+    // Two streams, overlay places sharp foreground centered over blurred bg.
     case "rack_focus": {
       const fgW = Math.floor(w * 0.65), fgH = Math.floor(h * 0.65);
       const cy2 = Math.max(0, Math.floor(h * 0.08));
       const fc = [
-        `[0:v]${SP}[base]`,
+        `[0:v]${SF}[base]`,
         `[base]split[bgi][fgi]`,
-        `[bgi]zoompan=z='1.08+0.04*on/${tf}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${tf}:s=${w}x${h}:fps=${fps},boxblur=14:4[bg]`,
-        `[fgi]crop=${fgW}:${fgH}:(iw-${fgW})/2:${cy2},zoompan=z='1.0+0.12*on/${tf}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${tf}:s=${fgW}x${fgH}:fps=${fps}[fg]`,
+        `[bgi]${kenBurns(w, h, tf, fps, 1.04, 1.10, "center")},boxblur=18:4[bg]`,
+        `[fgi]crop=${fgW}:${fgH}:(iw-${fgW})/2:${cy2},` +
+          `${kenBurns(fgW, fgH, tf, fps, 1.0, 1.14, "face")}[fg]`,
         `[bg][fg]overlay=x=(W-w)/2:y=(H-h)*3/8,fps=${fps}${post}[vout]`,
       ];
       return `ffmpeg -y ${inp} -filter_complex "${fc.join(";")}" -map "[vout]" ${OF} "${outPath}"`;
     }
 
+    // ─── IMPACT FRAME ─────────────────────────────────────────────────────────
+    // White flash overlay fades out in first 15% of scene.
+    // Image punches from 2.2× down to 1.05× using easeOutCubic on frame count.
+    // zoompan used only for zoom scale — legitimate use.
     case "impact_frame": {
-      const ff = Math.max(3, Math.floor(tf * 0.15));
-      const fd = Math.max(0.1, ff / fps).toFixed(3);
-      const zf = Math.max(2, tf - ff);
+      const flashFrames = Math.max(3, Math.floor(tf * 0.15));
+      const flashDur    = (flashFrames / fps).toFixed(4);
+      const zoomFrames  = tf - flashFrames;
+      // z: 2.2 → 1.05 over remaining frames
+      const zExpr = `if(lt(on,${flashFrames}),2.2,max(1.05,2.2-1.15*((on-${flashFrames})/${zoomFrames})*(1-(1-(on-${flashFrames})/${zoomFrames})*(1-(on-${flashFrames})/${zoomFrames})*(1-(on-${flashFrames})/${zoomFrames}))))`;
       const fc = [
-        `[0:v]${SP}[base]`,
-        `[base]zoompan=z='if(lt(on\\,${ff})\\,2.2\\,max(1.05\\,2.2-1.15*(on-${ff})/${zf}))':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${tf}:s=${w}x${h}:fps=${fps}[img]`,
-        `color=c=white:s=${w}x${h}:d=${durP}:r=${fps},format=yuva420p,fade=t=out:st=0:d=${fd}:alpha=1[flash]`,
-        `[img][flash]overlay=0:0:shortest=1,fps=${fps}${post}[vout]`,
+        `[0:v]${SF}[base]`,
+        `[base]zoompan=z='${zExpr}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${tf}:s=${w}x${h}:fps=${fps}[img]`,
+        `color=c=white:s=${w}x${h}:d=${durP}:r=${fps},format=yuva420p,` +
+          `fade=t=out:st=0:d=${flashDur}:alpha=1[flash]`,
+        `[img][flash]overlay=x=0:y=0:shortest=1,fps=${fps}${post}[vout]`,
       ];
       return `ffmpeg -y ${inp} -filter_complex "${fc.join(";")}" -map "[vout]" ${OF} "${outPath}"`;
     }
 
+    // ─── BOUNCE ZOOM ──────────────────────────────────────────────────────────
+    // Damped spring: z = 1.05 + 0.28*(1 - exp(-6p)*cos(12p))
+    // p = on/tf (linear frame progress — valid here since spring is frame-based oscillation)
     case "bounce_zoom": {
       const fc = [
-        `[0:v]${SP}[base]`,
-        `[base]zoompan=z='1.05+0.28*(1-exp(-3.5*on/${tf}*3.0)*cos(7.5*on/${tf}*3.0))':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${tf}:s=${w}x${h}:fps=${fps},fps=${fps}${post}[vout]`,
+        `[0:v]${SF}[base]`,
+        `[base]zoompan=` +
+          // 0.22 amplitude: less cartoon, more professional spring feel
+          `z='1.05+0.22*(1-exp(-6*on/${tf})*cos(12*on/${tf}))':` +
+          `x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':` +
+          `d=${tf}:s=${w}x${h}:fps=${fps},fps=${fps}${post}[vout]`,
       ];
       return `ffmpeg -y ${inp} -filter_complex "${fc.join(";")}" -map "[vout]" ${OF} "${outPath}"`;
     }
 
+    // ─── ZOOM BURST ───────────────────────────────────────────────────────────
+    // Punches in from 2.5× and decelerates to 1.05×.
+    // power(0.4) curve gives fast-deceleration feel (CapCut "zoom in" style).
     case "zoom_burst": {
       const fc = [
-        `[0:v]${SP}[base]`,
-        `[base]zoompan=z='max(1.05,2.5-1.45*pow(on/${tf},0.4))':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${tf}:s=${w}x${h}:fps=${fps},fps=${fps}${post}[vout]`,
+        `[0:v]${SF}[base]`,
+        `[base]zoompan=` +
+          // Micro jitter on top of deceleration curve — human-editor feel
+          `z='max(1.05,2.5-1.45*pow(min(1,on/${tf}),0.4)+0.01*sin(on*0.5))':` +
+          `x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':` +
+          `d=${tf}:s=${w}x${h}:fps=${fps},fps=${fps}${post}[vout]`,
       ];
       return `ffmpeg -y ${inp} -filter_complex "${fc.join(";")}" -map "[vout]" ${OF} "${outPath}"`;
     }
 
+    // ─── SHOCKWAVE ────────────────────────────────────────────────────────────
+    // Zoom decays exponentially + heavy vignette fades in then out.
+    // z = 1.05 + 0.18*exp(-7p), vignette angle pulses.
     case "shockwave": {
       const fc = [
-        `[0:v]${SP}[base]`,
-        `[base]zoompan=z='1.08+0.12*exp(-6.0*on/${tf})':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${tf}:s=${w}x${h}:fps=${fps},fps=${fps},vignette='PI/2*exp(-4*t/${Math.max(0.1, duration).toFixed(2)})+PI/6'${post}[vout]`,
+        `[0:v]${SF}[base]`,
+        `[base]zoompan=` +
+          `z='1.05+0.18*exp(-7*on/${tf})':` +
+          `x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':` +
+          `d=${tf}:s=${w}x${h}:fps=${fps},` +
+          `fps=${fps},` +
+          `vignette='PI/2*exp(-5*t/${durS})+PI/7'${post}[vout]`,
       ];
       return `ffmpeg -y ${inp} -filter_complex "${fc.join(";")}" -map "[vout]" ${OF} "${outPath}"`;
     }
 
+    // ─── LETTERBOX PAN ────────────────────────────────────────────────────────
+    // 2.35:1 cinematic bars + horizontal pan across zoomed image.
+    // zoompan used for pan within oversized image — legitimate use.
     case "letterbox_pan": {
-      const bh = Math.floor(h * 0.115);
-      const ps = (w * 0.055 / tf).toFixed(5);
+      const bh      = Math.floor(h * 0.115);
+      const pxPan   = Math.floor(w * 0.12);
+      const wWide   = w + pxPan + 4;
       const fc = [
-        `[0:v]${SP}[base]`,
-        `[base]zoompan=z=1.18:x='iw/2-(iw/zoom/2)+on*${ps}':y='ih/2-(ih/zoom/2)':d=${tf}:s=${w}x${h}:fps=${fps}[p]`,
-        `[p]drawbox=x=0:y=0:w=${w}:h=${bh}:color=black:t=fill,drawbox=x=0:y=${h-bh}:w=${w}:h=${bh}:color=black:t=fill,fps=${fps}${post}[vout]`,
+        `[0:v]scale=${wWide}:${h}:force_original_aspect_ratio=increase:flags=lanczos,` +
+          `crop=${wWide}:${h}:(iw-${wWide})/2:(ih-${h})/2,setsar=1[wide]`,
+        // easeOutCubic pan — camera decelerates naturally into position
+        `[wide]zoompan=z=1.0:x='min(${pxPan},${pxPan}*(1-(1-on/${tf})*(1-on/${tf})*(1-on/${tf})))':y='0':d=${tf}:s=${w}x${h}:fps=${fps}[panned]`,
+        `[panned]drawbox=x=0:y=0:w=${w}:h=${bh}:color=black:t=fill,` +
+          `drawbox=x=0:y=${h - bh}:w=${w}:h=${bh}:color=black:t=fill,` +
+          `fps=${fps}${post}[vout]`,
       ];
       return `ffmpeg -y ${inp} -filter_complex "${fc.join(";")}" -map "[vout]" ${OF} "${outPath}"`;
     }
 
+    // ─── TILT REVEAL ──────────────────────────────────────────────────────────
+    // Camera tilts upward — pan from bottom of image to top.
+    // Scaled taller than frame, pan y from bottom to top over full duration.
     case "tilt_reveal": {
-      const ts = (h * 0.055 / tf).toFixed(5);
+      const pxPan = Math.floor(h * 0.12);
+      const hTall = h + pxPan + 4;
       const fc = [
-        `[0:v]${SP}[base]`,
-        `[base]zoompan=z=1.12:x='iw/2-(iw/zoom/2)':y='min(ih-(ih/zoom),max(0,ih-(ih/zoom)-on*${ts}))':d=${tf}:s=${w}x${h}:fps=${fps},fps=${fps}${post}[vout]`,
+        `[0:v]scale=${w}:${hTall}:force_original_aspect_ratio=increase:flags=lanczos,` +
+          `crop=${w}:${hTall}:(iw-${w})/2:(ih-${hTall})/2,setsar=1[tall]`,
+        // Pan y from pxPan (bottom area) down to 0 (top area)
+        // z=1.02 slight zoom during tilt — feels like a real camera move
+        `[tall]zoompan=z=1.02:x='0':y='max(0,${pxPan}-on*${(pxPan / tf).toFixed(5)})':d=${tf}:s=${w}x${h}:fps=${fps},` +
+          `fps=${fps}${post}[vout]`,
       ];
       return `ffmpeg -y ${inp} -filter_complex "${fc.join(";")}" -map "[vout]" ${OF} "${outPath}"`;
     }
 
+    // ─── MIRROR COMPOSITE ─────────────────────────────────────────────────────
+    // Left half of image flipped and overlaid at 55% opacity.
+    // Background pans slowly. Ghost overlay is fixed. Stylized / music-video look.
     case "mirror_composite": {
-      const hw = Math.floor(w/2);
-      const ps = (w * 0.012 / tf).toFixed(5);
+      const hw = Math.floor(w / 2);
+      const pxBg = Math.floor(w * 0.06);
+      const wWide = w + pxBg + 4;
       const fc = [
-        `[0:v]${SP}[base]`,
-        `[base]split[full][mi]`,
-        `[full]zoompan=z=1.06:x='iw/2-(iw/zoom/2)+on*${ps}':y='ih/2-(ih/zoom/2)':d=${tf}:s=${w}x${h}:fps=${fps}[bg]`,
-        `[mi]crop=${hw}:${h}:0:0,hflip,zoompan=z=1.08:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${tf}:s=${hw}x${h}:fps=${fps},format=yuva420p,colorchannelmixer=aa=0.55[mg]`,
-        `[bg][mg]overlay=0:0,fps=${fps}${post}[vout]`,
+        `[0:v]scale=${wWide}:${h}:force_original_aspect_ratio=increase:flags=lanczos,` +
+          `crop=${wWide}:${h}:(iw-${wWide})/2:(ih-${h})/2,setsar=1[wide]`,
+        `[wide]split[bgw][mir]`,
+        `[bgw]zoompan=z=1.0:x='min(${pxBg},on*${(pxBg / tf).toFixed(5)})':y='0':d=${tf}:s=${w}x${h}:fps=${fps}[bg]`,
+        // Mirror: crop left half of original (not the panned version), hflip, alpha 0.55
+        `[mir]crop=${hw}:${h}:0:0,hflip,scale=${hw}:${h}:flags=lanczos,setsar=1,` +
+          // 0.50 opacity: balanced ghost feel, consistent across all scenes
+          `format=yuva420p,colorchannelmixer=aa=0.50[ghost]`,
+        `[bg][ghost]overlay=x=0:y=0,fps=${fps}${post}[vout]`,
       ];
       return `ffmpeg -y ${inp} -filter_complex "${fc.join(";")}" -map "[vout]" ${OF} "${outPath}"`;
     }
 
+    // ─── NEON FRAME ───────────────────────────────────────────────────────────
+    // Cyan/magenta border. Slow zoom-in. Clean and simple.
     case "neon_frame": {
       const brd = 14;
       const fc = [
-        `[0:v]${SP}[base]`,
-        `[base]zoompan=z='1.05+0.08*on/${tf}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${tf}:s=${w}x${h}:fps=${fps}[img]`,
-        `[img]drawbox=x=0:y=0:w=${w}:h=${brd}:color=0x00ffff@0.9:t=fill,drawbox=x=0:y=${h-brd}:w=${w}:h=${brd}:color=0xff00ff@0.9:t=fill,drawbox=x=0:y=0:w=${brd}:h=${h}:color=0x00ffff@0.9:t=fill,drawbox=x=${w-brd}:y=0:w=${brd}:h=${h}:color=0xff00ff@0.9:t=fill,fps=${fps}${post}[vout]`,
+        `[0:v]${SF}[base]`,
+        `[base]${kenBurns(w, h, tf, fps, 1.0, 1.08, "center")},` +
+          `drawbox=x=0:y=0:w=${w}:h=${brd}:color=0x00ffff@0.9:t=fill,` +
+          `drawbox=x=0:y=${h - brd}:w=${w}:h=${brd}:color=0xff00ff@0.9:t=fill,` +
+          `drawbox=x=0:y=0:w=${brd}:h=${h}:color=0x00ffff@0.9:t=fill,` +
+          `drawbox=x=${w - brd}:y=0:w=${brd}:h=${h}:color=0xff00ff@0.9:t=fill,` +
+          `fps=${fps}${post}[vout]`,
       ];
       return `ffmpeg -y ${inp} -filter_complex "${fc.join(";")}" -map "[vout]" ${OF} "${outPath}"`;
     }
 
+    // ─── VHS COMPOSITE ────────────────────────────────────────────────────────
+    // Analog jitter (x/y oscillation via zoompan sin waves) + chromatic shift +
+    // noise + scanlines. zoompan oscillation is legitimate — z=const, jitter in x/y.
     case "vhs_composite": {
       const fc = [
-        `[0:v]${SP}[base]`,
-        `[base]zoompan=z=1.05:x='iw/2-(iw/zoom/2)+3*sin(on*0.7)':y='ih/2-(ih/zoom/2)+2*sin(on*0.4+1.2)':d=${tf}:s=${w}x${h}:fps=${fps},rgbashift=rh=2:rv=0:gh=-1:gv=1:bh=-2:bv=0,noise=alls=10:allf=t+u,drawgrid=width=0:height=4:thickness=1:color=black@0.22,fps=${fps}${post}[vout]`,
+        `[0:v]${SF}[base]`,
+        `[base]zoompan=z=1.05:` +
+          `x='iw/2-(iw/zoom/2)+4*sin(on*0.71)':` +
+          `y='ih/2-(ih/zoom/2)+3*sin(on*0.43+1.2)':` +
+          `d=${tf}:s=${w}x${h}:fps=${fps},` +
+          `rgbashift=rh=2:rv=0:gh=-1:gv=1:bh=-2:bv=0,` +
+          // alls=8: less chaotic, more stylized (pro VHS look not broken tape)
+          `noise=alls=8:allf=t+u,` +
+          `drawgrid=width=0:height=4:thickness=1:color=black@0.20,` +
+          `fps=${fps}${post}[vout]`,
       ];
       return `ffmpeg -y ${inp} -filter_complex "${fc.join(";")}" -map "[vout]" ${OF} "${outPath}"`;
     }
@@ -471,336 +713,220 @@ function buildCompositionCmd(opts) {
   }
 }
 
-// ─── MULTI-IMAGE COMPOSITIONS ─────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// MULTI-IMAGE COMPOSITIONS
+// ═══════════════════════════════════════════════════════════════════════════════
 
-function _multi(composition, opts, { dur, durP, post, OF, tf, fps, w, h, beatOffsets }) {
+function _buildMulti(composition, opts, { dur, durS, durP, tf, fps, w, h, post, OF, beatOffsets }) {
   const { outPath } = opts;
-  const rawPaths = resolveInputPaths(opts, 3);
+  const rawPaths = resolveInputPaths(opts, 4);
 
-  // Build the -loop 1 inputs for all images.
-  // IMPORTANT: multi-image compositions MUST use the original (unprocessed)
-  // paths and do all scaling inside filter_complex. Using resizeMedia-preprocessed
-  // full-frame images breaks strip/panel compositions (negative crop offsets).
-  const mkInputs = (count) =>
-    padPaths(rawPaths, count).map(p => `-loop 1 -t ${durP} -i "${p}"`).join(" ");
-
-  // Beat offsets → seconds for time-based expressions
-  const beatTimes = beatOffsets.slice(0, 3);
-  while (beatTimes.length < 3) {
-    beatTimes.push((beatTimes.length * parseFloat(dur)) / 3);
-  }
+  // Beat times for staggered animations (up to 3 beats)
+  const beats = beatOffsets.slice(0, 3);
+  while (beats.length < 3) beats.push((beats.length * dur) / 3);
 
   switch (composition) {
 
-    // ── BEAT STACK 3 ─────────────────────────────────────────────────────────
-    // Three horizontal strips stacked vertically (full width, 1/3 height each).
-    // Each strip slides up from below the frame on its beat time using 't' (seconds).
-    // Design: slotH = h/3, gap = 2px between strips.
-    // Slide animation: 0.3s duration, ease-in using sqrt(progress).
+    // ─── BEAT STACK 3 ─────────────────────────────────────────────────────────
+    // Three strips slide up from below on successive beats.
+    // Each strip is pre-scaled to w × slotH, placed via overlay y expression.
+    // easeOutCubic for each strip's enter animation.
     case "beat_stack_3": {
-      const paths   = padPaths(rawPaths, 3);
-      const inputs  = paths.map(p => `-loop 1 -t ${durP} -i "${p}"`).join(" ");
-      const slotH   = Math.floor(h / 3);
-      const gap     = 2;
-      const slideD  = 0.30; // seconds for slide animation
-      // Slot Y positions (top of each strip on the canvas)
-      const slotY   = [0, slotH + gap, 2 * (slotH + gap)];
-
-      const fc = [];
-
-      // Scale each image to fill exactly w×slotH (fill + centre-crop, no negative offsets)
+      const paths  = padPaths(rawPaths, 3);
+      const inputs = paths.map(q => `-loop 1 -t ${durP} -i "${q}"`).join(" ");
+      const slotH  = Math.floor(h / 3);
+      const gap    = 2;
+      const slideD = 0.28;
+      const slotY  = [0, slotH + gap, 2 * (slotH + gap)];
+      const fc     = [];
       for (let i = 0; i < 3; i++) {
         fc.push(`[${i}:v]${scaleFill(w, slotH)}[strip${i}]`);
       }
-
-      // Black canvas
       fc.push(`color=c=black:s=${w}x${h}:d=${durP}:r=${fps}[canvas]`);
-
-      // Overlay each strip with time-based slide from bottom to its slot.
-      // y(t) when t < beatT[i]: h (off screen below)
-      // y(t) when t >= beatT[i]: targetY + (h - targetY) * (1 - sqrt(progress))
-      //   where progress = min(1, (t - beatT[i]) / slideD)
-      // sqrt gives ease-in feel (slow start, fast arrival)
       let prev = "canvas";
       for (let i = 0; i < 3; i++) {
         const tY  = slotY[i];
-        const bT  = beatTimes[i].toFixed(4);
-        const out = i === 2 ? "vout_raw" : `comp${i}`;
-
-        // When t < bT → y=h (strip hidden below canvas)
-        // When t >= bT → y slides from h to tY over slideD seconds
-        // Note: (h - tY) = distance to travel; tY = final resting position
-        const yExpr =
-          `if(lt(t\\,${bT})\\,` +
-          `${h}\\,` +
-          `${tY}+(${h - tY})*(1-sqrt(min(1\\,(t-${bT})/${slideD.toFixed(4)}))))`;
-
+        const bT  = beats[i];
+        const out = i === 2 ? "stacked" : `cs${i}`;
+        // y: h → tY using easeOutCubic starting at beat time bT
+        const prog = p(bT, slideD);
+        const yExpr = lerp(h, tY, `(1-(1-${prog})*(1-${prog})*(1-${prog}))`);
         fc.push(`[${prev}][strip${i}]overlay=x=0:y='${yExpr}'[${out}]`);
         prev = out;
       }
-
-      fc.push(`[vout_raw]fps=${fps}${post}[vout]`);
-
+      fc.push(`[stacked]fps=${fps}${post}[vout]`);
       return `ffmpeg -y ${inputs} -filter_complex "${fc.join(";")}" -map "[vout]" ${OF} "${outPath}"`;
     }
 
-    // ── TRIPTYCH REVEAL ──────────────────────────────────────────────────────
-    // Three vertical panels (left, centre, right) each w/3 wide × h tall.
-    // Each panel wipes in from the TOP using a shrinking black mask.
-    // The wipe duration is 0.4s per panel, triggered at beat times.
+    // ─── TRIPTYCH REVEAL ──────────────────────────────────────────────────────
+    // Three vertical panels wipe in from top on successive beats.
+    // Cover approach: black mask shrinks per panel.
+    // Fix: min cover height = 2 to prevent empty-crop crash.
     case "triptych_reveal": {
-      const paths   = padPaths(rawPaths, 3);
-      const inputs  = paths.map(p => `-loop 1 -t ${durP} -i "${p}"`).join(" ");
-      const panelW  = Math.floor(w / 3);
-      const gap     = 2;
-      const pw      = panelW - gap; // visible panel width
-      const wipeD   = 0.40; // seconds for wipe animation
-
-      const fc = [];
-
-      // Each image: scale to fill pw×h, slow zoom inside the panel
+      const paths  = padPaths(rawPaths, 3);
+      const inputs = paths.map(q => `-loop 1 -t ${durP} -i "${q}"`).join(" ");
+      const gap    = 2;
+      const pw     = Math.floor((w - gap * 2) / 3);
+      const wipeD  = 0.38;
+      const fc     = [];
       for (let i = 0; i < 3; i++) {
         fc.push(
           `[${i}:v]${scaleFill(pw, h)},` +
-          `zoompan=z='1.04+0.04*on/${tf}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':` +
-          `d=${tf}:s=${pw}x${h}:fps=${fps}[panel${i}]`
+          `${kenBurns(pw, h, tf, fps, 1.0, 1.06, "center")}[panel${i}]`
         );
       }
-
-      // Canvas
       fc.push(`color=c=black:s=${w}x${h}:d=${durP}:r=${fps}[canvas]`);
-
-      // Overlay each panel. Use a masking approach: the panel overlays at its x position.
-      // The panel itself is revealed by cropping it: visible_h = min(h, h * progress)
-      // where progress = min(1, (t - beatT[i]) / wipeD)
-      // FFmpeg crop with time expression: crop=pw:h*min(1,(t-bT)/wipeD):0:0
-      // Then overlay at (i * panelW, 0). Panel stays off (canvas shows black) before bT.
-
-      // Approach: use overlay enable + a growing crop on the panel.
-      // We generate a separate cropped version for each panel:
       let prev = "canvas";
       for (let i = 0; i < 3; i++) {
-        const bT  = beatTimes[i].toFixed(4);
-        const xPos = i * panelW;
-        const out = i === 2 ? "composed" : `comp${i}`;
-
-        // Crop the panel height from 0 to h over wipeD seconds (top-down wipe)
-        // crop=pw : 'min(h, h*max(0,(t-bT)/wipeD)' : 0 : 0
-        // Before bT: crop height = 0 → invisible; after bT: grows to full h
-        fc.push(
-          `[panel${i}]crop=${pw}:'min(${h}\\,${h}*max(0\\,(t-${bT})/${wipeD.toFixed(4)}))':0:0[pw${i}]`
-        );
-
-        fc.push(`[${prev}][pw${i}]overlay=x=${xPos}:y=0[${out}]`);
+        // Micro-stagger: each panel starts 0.05s after its beat — cascade feel
+        const bT   = beats[i] + staggerSec(i, 0.05);
+        const xPos = i * (pw + gap);
+        const out  = i === 2 ? "composed" : `cp${i}`;
+        // revealed height: 0 → h using easeOutCubic from beat time
+        const prog    = p(bT, wipeD);
+        const revealH = lerp(0, h, `(1-(1-${prog})*(1-${prog})*(1-${prog}))`);
+        // Cover = what's NOT yet revealed (shrinks from h to 0)
+        const coverH  = `max(2,${h}-(${revealH}))`;
+        fc.push(`[panel${i}]crop=${pw}:'${coverH}':0:0[cv${i}]`);
+        // Place panel at xPos; cover sits at top and shrinks away
+        // Actual reveal: overlay panel at (xPos, revealedTop) — simpler to use cover overlay
+        // Better: place full panel, cover top with black shrinking rect
+        fc.push(`[${prev}][panel${i}]overlay=x=${xPos}:y=0[pt${i}]`);
+        fc.push(`[pt${i}][cv${i}]overlay=x=${xPos}:y=0[${out}]`);
         prev = out;
       }
-
       fc.push(`[composed]fps=${fps}${post}[vout]`);
-
       return `ffmpeg -y ${inputs} -filter_complex "${fc.join(";")}" -map "[vout]" ${OF} "${outPath}"`;
     }
 
-    // ── STAGGER SLIDE UP ─────────────────────────────────────────────────────
-    // Up to 3 full-frame images appear in sequence, each sliding up from the
-    // bottom and settling at y=0 (full frame). Later images slide on top of
-    // earlier ones, so each new image fully replaces the previous one.
-    // Stagger: 0.5s between each image's slide start.
-    // Slide: 0.35s, ease-out (decelerating) using (1 - (1-progress)^2).
-    case "stagger_slide_up": {
-      const count  = rawPaths.length;
-      const inputs = rawPaths.map(p => `-loop 1 -t ${durP} -i "${p}"`).join(" ");
-      const stag   = 0.50;  // seconds between each image appearing
-      const slideD = 0.35;  // slide duration
-
-      const fc = [];
-
-      // Scale all inputs to full frame
-      for (let i = 0; i < count; i++) {
-        fc.push(`[${i}:v]${scaleFill(w, h)}[img${i}]`);
-      }
-
-      // Canvas (black start)
-      fc.push(`color=c=black:s=${w}x${h}:d=${durP}:r=${fps}[canvas]`);
-
-      let prev = "canvas";
-      for (let i = 0; i < count; i++) {
-        const startT = (i * stag).toFixed(4);
-        const out    = i === count - 1 ? "stacked" : `sl${i}`;
-
-        // Ease-out slide: y = h * (1 - progress)^2 where progress = min(1,(t-startT)/slideD)
-        // Before startT → y=h (hidden below). After startT → slides to y=0.
-        const prog   = `min(1\\,(t-${startT})/${slideD.toFixed(4)})`;
-        const yExpr  = `if(lt(t\\,${startT})\\,${h}\\,${h}*(1-${prog})*(1-${prog}))`;
-
-        fc.push(`[${prev}][img${i}]overlay=x=0:y='${yExpr}'[${out}]`);
-        prev = out;
-      }
-
-      fc.push(`[stacked]fps=${fps}${post}[vout]`);
-
-      return `ffmpeg -y ${inputs} -filter_complex "${fc.join(";")}" -map "[vout]" ${OF} "${outPath}"`;
-    }
-
-    // ── SPLIT AND ZOOM ───────────────────────────────────────────────────────
-    // Single image splits into two halves; left half zooms left, right half zooms right.
-    // Creates a dramatic "opening" reveal. Works with 1 image.
-    case "split_and_zoom": {
-      const [p0] = padPaths(rawPaths, 1);
-      const inputs = `-loop 1 -t ${durP} -i "${p0}"`;
-      const hw    = Math.floor(w / 2);
-      const splitD = Math.min(0.5, parseFloat(dur) * 0.6);
+    // ─── DOOR OPEN ────────────────────────────────────────────────────────────
+    // Background (img 0) revealed as two door panels (from img 1) slide apart.
+    // Left panel exits left, right panel exits right. easeOutCubic.
+    // Fix: all panel movement via overlay x — no zoompan for translation.
+    case "door_open": {
+      const paths  = padPaths(rawPaths, 2);
+      const inputs = paths.map(q => `-loop 1 -t ${durP} -i "${q}"`).join(" ");
+      const hw     = Math.floor(w / 2);
+      const openD  = Math.min(dur * 0.50, 0.7);
+      // Left exits: x 0 → -hw
+      const lxExpr = lerp(0, -hw, eoc(0, openD));
+      // Right exits: x hw → w
+      const rxExpr = lerp(hw, w, eoc(0, openD));
       const fc = [
-        `[0:v]${scaleFill(w, h)}[base]`,
-        `[base]split[la][ra]`,
-        // Left half: crop left side, pan left (x increases from iw/2-(iw/zoom/2) rightward)
-        `[la]crop=${hw}:${h}:0:0,` +
-          `zoompan=z='1.0+0.12*min(1\\,t/${splitD.toFixed(3)})':` +
-          `x='0':y='ih/2-(ih/zoom/2)':d=${tf}:s=${hw}x${h}:fps=${fps}[lz]`,
-        // Right half: crop right side, pan right
-        `[ra]crop=${hw}:${h}:${hw}:0,` +
-          `zoompan=z='1.0+0.12*min(1\\,t/${splitD.toFixed(3)})':` +
-          `x='iw-(iw/zoom)':y='ih/2-(ih/zoom/2)':d=${tf}:s=${hw}x${h}:fps=${fps}[rz]`,
-        `color=c=black:s=${w}x${h}:d=${durP}:r=${fps}[bg]`,
-        `[bg][lz]overlay=0:0[t1]`,
-        `[t1][rz]overlay=${hw}:0,fps=${fps}${post}[vout]`,
+        `[0:v]${scaleFill(w, h)}[bg]`,
+        `[1:v]${scaleFill(w, h)}[door]`,
+        `[door]split[dl][dr]`,
+        `[dl]crop=${hw}:${h}:0:0[lp]`,
+        `[dr]crop=${hw}:${h}:${hw}:0[rp]`,
+        // Stronger bg zoom (1.10) — bg feels like it's breathing into the scene
+        `[bg]${kenBurns(w, h, tf, fps, 1.0, 1.10, "center")}[bgz]`,
+        `[bgz][lp]overlay=x='${lxExpr}':y=0[t1]`,
+        `[t1][rp]overlay=x='${rxExpr}':y=0,fps=${fps}${post}[vout]`,
       ];
-      return `ffmpeg -y ${inputs} -filter_complex "${fc.join(";")}" -map "[vout]" ${OF} "${opts.outPath}"`;
+      return `ffmpeg -y ${inputs} -filter_complex "${fc.join(";")}" -map "[vout]" ${OF} "${outPath}"`;
     }
 
-    // ── PHOTO WALL SWEEP ─────────────────────────────────────────────────────
-    // 4 images arranged in a 2×2 grid at 110% of frame size (so they bleed
-    // off-screen). A slow camera pan sweeps left→right across the wall.
-    // Uses 2 images if only 2 provided (reuses them for all 4 slots).
+    // ─── PHOTO WALL SWEEP ─────────────────────────────────────────────────────
+    // 2×2 grid assembled on wide canvas, panned left→right via zoompan.
+    // zoompan legitimate: panning within oversized assembled wall canvas.
     case "photo_wall_sweep": {
-      const paths  = padPaths(rawPaths, 4);
-      // Clamp to available: use rawPaths for first slots, repeat last for rest
-      const pFull  = padPaths(rawPaths, 4);
-      const inputs = pFull.map(p => `-loop 1 -t ${durP} -i "${p}"`).join(" ");
-
-      const cellW  = Math.floor(w * 0.55);  // each cell is 55% of frame width
-      const cellH  = Math.floor(h * 0.52);  // 52% of frame height
-      const wallW  = cellW * 2 + 8;         // total wall width (2 cols + gap)
-      const wallH  = cellH * 2 + 8;         // total wall height (2 rows + gap)
-      // Pan: wall starts at x offset -10, sweeps to show right side
+      const paths   = padPaths(rawPaths, 4);
+      const inputs  = paths.map(q => `-loop 1 -t ${durP} -i "${q}"`).join(" ");
+      const cellW   = Math.floor(w * 0.55);
+      const cellH   = Math.floor(h * 0.52);
+      const wallW   = cellW * 2 + 8;
+      const wallH   = cellH * 2 + 8;
       const panDist = Math.max(0, wallW - w);
-      const panStep = (panDist / parseFloat(dur)).toFixed(4);
-
-      const fc = [];
-
-      // Scale each image to fill a cell
-      for (let i = 0; i < 4; i++) {
-        fc.push(`[${i}:v]${scaleFill(cellW, cellH)}[cell${i}]`);
-      }
-
-      // Assemble wall: 2×2 grid onto a big canvas
+      const cropY   = Math.max(0, Math.floor((wallH - h) / 2));
+      const fc      = [];
+      for (let i = 0; i < 4; i++) fc.push(`[${i}:v]${scaleFill(cellW, cellH)}[cell${i}]`);
       fc.push(`color=c=black:s=${wallW}x${wallH}:d=${durP}:r=${fps}[wall]`);
-      fc.push(`[wall][cell0]overlay=0:0[w1]`);
-      fc.push(`[w1][cell1]overlay=${cellW + 8}:0[w2]`);
-      fc.push(`[w2][cell2]overlay=0:${cellH + 8}[w3]`);
-      fc.push(`[w3][cell3]overlay=${cellW + 8}:${cellH + 8}[assembled]`);
-
-      // Animate: slow pan left to right across the wall, centred vertically
-      // crop=w:h : pan_x : (wallH-h)/2
-      const cropY = Math.max(0, Math.floor((wallH - h) / 2));
-      fc.push(
-        `[assembled]crop=${w}:${h}:'min(${panDist}\\,t*${panStep})':${cropY}` +
-        `,fps=${fps}${post}[vout]`
-      );
-
-      return `ffmpeg -y ${inputs} -filter_complex "${fc.join(";")}" -map "[vout]" ${OF} "${opts.outPath}"`;
+      fc.push(`[wall][cell0]overlay=x=0:y=0[w1]`);
+      fc.push(`[w1][cell1]overlay=x=${cellW + 8}:y=0[w2]`);
+      fc.push(`[w2][cell2]overlay=x=0:y=${cellH + 8}[w3]`);
+      fc.push(`[w3][cell3]overlay=x=${cellW + 8}:y=${cellH + 8}[assembled]`);
+      // Linear pan for wall sweep — natural camera movement
+      const xExpr = `min(${panDist},t*${(panDist / dur).toFixed(4)})`;
+      // Subtle y drift: 8px sin wave — organic camera sway
+      const yExpr = `${cropY}+8*sin(t*0.7)`;
+      fc.push(`[assembled]crop=${w}:${h}:'${xExpr}':'${yExpr}',fps=${fps}${post}[vout]`);
+      return `ffmpeg -y ${inputs} -filter_complex "${fc.join(";")}" -map "[vout]" ${OF} "${outPath}"`;
     }
 
-    // ── CINEMATIC DUO ────────────────────────────────────────────────────────
-    // Two images: image 0 occupies the top 35% (portrait/face crop),
-    // image 1 occupies the bottom 65% (wide/action crop).
-    // A thin black divider separates them. Each has its own slow zoom.
+    // ─── CINEMATIC DUO ────────────────────────────────────────────────────────
+    // Top 35%: portrait/face crop. Bottom 65%: wide/action crop. Black divider.
+    // Each slot gets its own gentle Ken Burns. No position drift.
     case "cinematic_duo": {
       const paths  = padPaths(rawPaths, 2);
-      const inputs = paths.map(p => `-loop 1 -t ${durP} -i "${p}"`).join(" ");
+      const inputs = paths.map(q => `-loop 1 -t ${durP} -i "${q}"`).join(" ");
       const topH   = Math.floor(h * 0.35);
-      const botH   = h - topH - 4;  // 4px divider
-
+      const botH   = h - topH - 4;
       const fc = [
-        // Top image: fill top slot, face-biased (upper-centre crop)
-        `[0:v]${scaleFill(w, topH)},` +
-          `zoompan=z='1.04+0.04*on/${tf}':x='iw/2-(iw/zoom/2)':y='max(0,ih*0.30-(ih/zoom/2))':` +
-          `d=${tf}:s=${w}x${topH}:fps=${fps}[top]`,
-        // Bottom image: fill bottom slot
-        `[1:v]${scaleFill(w, botH)},` +
-          `zoompan=z='1.06+0.02*on/${tf}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':` +
-          `d=${tf}:s=${w}x${botH}:fps=${fps}[bot]`,
+        `[0:v]${scaleFill(w, topH)},${kenBurns(w, topH, tf, fps, 1.0, 1.06, "face")}[top]`,
+        `[1:v]${scaleFill(w, botH)},${kenBurns(w, botH, tf, fps, 1.0, 1.08, "center")}[bot]`,
         `color=c=black:s=${w}x${h}:d=${durP}:r=${fps}[bg]`,
-        `[bg][top]overlay=0:0[t1]`,
-        `[t1][bot]overlay=0:${topH + 4},fps=${fps}${post}[vout]`,
+        `[bg][top]overlay=x=0:y=0[t1]`,
+        `[t1][bot]overlay=x=0:y=${topH + 4},fps=${fps}${post}[vout]`,
       ];
-      return `ffmpeg -y ${inputs} -filter_complex "${fc.join(";")}" -map "[vout]" ${OF} "${opts.outPath}"`;
+      return `ffmpeg -y ${inputs} -filter_complex "${fc.join(";")}" -map "[vout]" ${OF} "${outPath}"`;
     }
 
-    // ── PIP CORNER ───────────────────────────────────────────────────────────
-    // Image 0: full frame background with slow zoom.
-    // Image 1: picture-in-picture at bottom-right corner, 30% of frame size.
-    // PIP slides in from the right on the first beat (or at t=0.3s).
+    // ─── PIP CORNER ───────────────────────────────────────────────────────────
+    // Full frame background (slow Ken Burns) + PIP slides in from right.
+    // PIP movement via overlay x expression — easeOutCubic.
     case "pip_corner": {
       const paths  = padPaths(rawPaths, 2);
-      const inputs = paths.map(p => `-loop 1 -t ${durP} -i "${p}"`).join(" ");
+      const inputs = paths.map(q => `-loop 1 -t ${durP} -i "${q}"`).join(" ");
       const pipW   = Math.floor(w * 0.30);
       const pipH   = Math.floor(h * 0.30);
-      const pipX   = w - pipW - 20;  // 20px from right edge
-      const pipY   = h - pipH - 20;  // 20px from bottom edge
-      const slideT = (beatTimes[0] || 0.3).toFixed(4);
+      const pipX   = w - pipW - 20;
+      const pipY   = h - pipH - 20;
+      const slideT = Math.max(0.1, beats[0] || 0.3);
       const slideD = 0.30;
-
+      // PIP x: w → pipX using easeOutCubic starting at slideT
+      const xExpr  = lerp(w, pipX, eoc(slideT, slideD));
       const fc = [
-        // Background: full frame slow breathe zoom
-        `[0:v]${scaleFill(w, h)},` +
-          `zoompan=z='1.04+0.06*sin(on*3.14159/${tf})':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':` +
-          `d=${tf}:s=${w}x${h}:fps=${fps}[bg]`,
-        // PIP: scale to pip size
+        `[0:v]${scaleFill(w, h)},${kenBurns(w, h, tf, fps, 1.02, 1.08, "center")}[bg]`,
         `[1:v]${scaleFill(pipW, pipH)}[pip_raw]`,
-        // PIP border: drawbox around the pip
-        `[pip_raw]drawbox=x=0:y=0:w=${pipW}:h=${pipH}:color=white@0.8:t=3[pip]`,
-        // Overlay PIP: slides in from right (x starts at w, ends at pipX)
-        // x(t) = pipX + (w - pipX) * max(0, 1 - (t-slideT)/slideD)^2  ease-out
-        `[bg][pip]overlay=` +
-          `x='if(lt(t\\,${slideT})\\,${w}\\,${pipX}+(${w - pipX})*(1-min(1\\,(t-${slideT})/${slideD.toFixed(4)}))^2)':` +
-          `y=${pipY},fps=${fps}${post}[vout]`,
+        `[pip_raw]drawbox=x=0:y=0:w=${pipW}:h=${pipH}:color=white@0.75:t=3[pip]`,
+        `[bg][pip]overlay=x='${xExpr}':y=${pipY},fps=${fps}${post}[vout]`,
       ];
-      return `ffmpeg -y ${inputs} -filter_complex "${fc.join(";")}" -map "[vout]" ${OF} "${opts.outPath}"`;
+      return `ffmpeg -y ${inputs} -filter_complex "${fc.join(";")}" -map "[vout]" ${OF} "${outPath}"`;
     }
 
-    // ── CROSS REVEAL ─────────────────────────────────────────────────────────
-    // Image 0 fills the left half, sliding in from the left.
-    // Image 1 fills the right half, sliding in from the right.
-    // Both start simultaneously, meeting in the middle with a thin gap.
-    // Works with 1 image (uses same image for both halves).
+    // ─── CROSS REVEAL ─────────────────────────────────────────────────────────
+    // Left half enters from x=-hw, right half enters from x=+w.
+    // Both meet at center simultaneously. easeOutCubic.
+    // Fix: overlay x for movement (not zoompan). Correct gap math.
     case "cross_reveal": {
       const paths  = padPaths(rawPaths, 2);
-      const inputs = paths.map(p => `-loop 1 -t ${durP} -i "${p}"`).join(" ");
-      const hw     = Math.floor(w / 2) - 2;  // half width minus 2px for gap
-      const slideD = Math.min(0.55, parseFloat(dur) * 0.5);
-
+      const inputs = paths.map(q => `-loop 1 -t ${durP} -i "${q}"`).join(" ");
+      const gap    = 4;
+      const hw     = Math.floor((w - gap) / 2);
+      const slideD = Math.min(dur * 0.50, 0.55);
+      // Left: x = -hw → 0
+      const lxExpr = lerp(-hw, 0, eoc(0, slideD));
+      // Right: x = w-hw → hw+gap (its resting x position)
+      const rxExpr = lerp(w - hw, hw + gap, eoc(0, slideD));
       const fc = [
-        // Left image: crop left half, slides in from the left
-        `[0:v]${scaleFill(w, h)},crop=${hw}:${h}:0:0[left_img]`,
-        // Right image: crop right half, slides in from the right
-        `[1:v]${scaleFill(w, h)},crop=${hw}:${h}:${hw + 4}:0[right_img]`,
-        // Slow zoom on each half
-        `[left_img]zoompan=z='1.04+0.04*on/${tf}':x='max(0,iw/2-(iw/zoom/2)-on*0.2)':y='ih/2-(ih/zoom/2)':d=${tf}:s=${hw}x${h}:fps=${fps}[left_z]`,
-        `[right_img]zoompan=z='1.04+0.04*on/${tf}':x='min(iw-(iw/zoom),iw/2-(iw/zoom/2)+on*0.2)':y='ih/2-(ih/zoom/2)':d=${tf}:s=${hw}x${h}:fps=${fps}[right_z]`,
-        // Canvas
+        `[0:v]${scaleFill(w, h)},crop=${hw}:${h}:0:0,${kenBurns(hw, h, tf, fps, 1.0, 1.05, "center")}[lz]`,
+        `[1:v]${scaleFill(w, h)},crop=${hw}:${h}:${hw + gap}:0,${kenBurns(hw, h, tf, fps, 1.0, 1.05, "center")}[rz]`,
         `color=c=black:s=${w}x${h}:d=${durP}:r=${fps}[bg]`,
-        // Left slides in from x=-hw to x=0
-        `[bg][left_z]overlay=x='${-hw}+${hw}*min(1\\,t/${slideD.toFixed(4)})*min(1\\,t/${slideD.toFixed(4)})':y=0[t1]`,
-        // Right slides in from x=w to x=hw+4
-        `[t1][right_z]overlay=x='${w}-${hw}*min(1\\,t/${slideD.toFixed(4)})*min(1\\,t/${slideD.toFixed(4)})':y=0,fps=${fps}${post}[vout]`,
+        // Subtle y drift: opposite directions, creates parallax depth feel
+        `[bg][lz]overlay=x='${lxExpr}':y='8*sin(t*2)'[t1]`,
+        `[t1][rz]overlay=x='${rxExpr}':y='-8*sin(t*2)',fps=${fps}${post}[vout]`,
       ];
-      return `ffmpeg -y ${inputs} -filter_complex "${fc.join(";")}" -map "[vout]" ${OF} "${opts.outPath}"`;
+      return `ffmpeg -y ${inputs} -filter_complex "${fc.join(";")}" -map "[vout]" ${OF} "${outPath}"`;
     }
 
     default:
       return null;
   }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// EXPORTS
+// ═══════════════════════════════════════════════════════════════════════════════
 
 module.exports = {
   COMPOSITIONS,
@@ -808,4 +934,6 @@ module.exports = {
   COMPOSITION_CATEGORIES,
   buildCompositionCmd,
   buildFaceCrop,
+  // Export animation helpers so timeline editor can use same math
+  animHelpers: { p, eoc, eic, eob, lerp, kenBurns },
 };

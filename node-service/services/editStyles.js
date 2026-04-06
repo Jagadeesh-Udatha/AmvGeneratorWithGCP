@@ -57,8 +57,8 @@ const EDIT_STYLES = {
     ],
     transitions: [
       "flash_black", "glitch_cut", "whip_pan_left", "flash_white",
-      "strobe_cut", "whip_pan_right", "slice_left", "film_burn",
-      "fadeblack_fast", "slice_right",
+      "whip_pan_right", "slice_left",
+      "slice_right",
     ],
     grades: [
       "hype_red", "hype_blue", "neon", "cinematic", "hype_green",
@@ -67,13 +67,13 @@ const EDIT_STYLES = {
       "vignette", "chromatic_aberration", "scanlines", "speed_lines", "film_grain",
     ],
     compositions: {
-      INTRO:    ["slide_in_left", "character_reveal", "slide_in_top"],
-      VERSE_1:  ["impact_frame", "manga_panels", "diagonal_split"],
-      CHORUS_1: ["shockwave", "zoom_burst", "three_panel", "bounce_zoom"],
-      BRIDGE:   ["neon_frame", "vhs_composite", "mirror_composite"],
-      CHORUS_2: ["zoom_burst", "shockwave", "quad_grid", "impact_frame"],
-      CLIMAX:   ["shockwave", "impact_frame", "zoom_burst", "bounce_zoom", "three_panel"],
-      OUTRO:    ["slide_in_left", "character_reveal"],
+      INTRO:    ["swipe_in_left", "character_reveal", "swipe_in_top"],
+      VERSE_1:  ["impact_frame"],
+      CHORUS_1: ["shockwave", "zoom_burst", "bounce_zoom"],
+      BRIDGE:   ["neon_frame", "vhs_composite"],
+      CHORUS_2: ["zoom_burst", "shockwave", "impact_frame"],
+      CLIMAX:   ["shockwave", "impact_frame", "zoom_burst", "bounce_zoom"],
+      OUTRO:    ["swipe_in_left", "character_reveal"],
     },
   },
 
@@ -92,12 +92,12 @@ const EDIT_STYLES = {
     dropMergeGap: 1.2,  // merge drops closer than 1.2s — only keep big structural drops
 
     effects: [
-      "ken_burns_fast", "zoom_out", "pan_right", "zoom_in", "ken_burns",
-      "tilt_shift", "drift_right", "freeze_punch", "speed_ramp_out", "spin_cw",
+      "zoom_out", "zoom_in", "ken_burns",
+      "freeze_punch", "speed_ramp_out", "spin_cw",
     ],
     transitions: [
-      "cross_zoom", "zoom_blur_in", "flash_black", "dissolve_fast",
-      "whip_pan_right", "push_right", "film_burn", "wipe_down",
+      "zoom_blur_in", "flash_black",
+      "whip_pan_right", "push_right", "wipe_down",
     ],
     grades: [
       "triumphant_gold", "cinematic", "teal_orange", "cold_steel",
@@ -107,13 +107,13 @@ const EDIT_STYLES = {
       "vignette", "lens_flare", "film_grain", "particles",
     ],
     compositions: {
-      INTRO:    ["letterbox_pan", "tilt_reveal", "rack_focus"],
-      VERSE_1:  ["letterbox_pan", "parallax", "rack_focus", "tilt_reveal"],
+      INTRO:    [],
+      VERSE_1:  [],
       CHORUS_1: ["impact_frame", "zoom_burst", "bounce_zoom", "shockwave"],
-      BRIDGE:   ["spotlight_zoom", "parallax", "rack_focus"],
+      BRIDGE:   ["spotlight_zoom"],
       CHORUS_2: ["zoom_burst", "impact_frame", "shockwave", "bounce_zoom"],
       CLIMAX:   ["shockwave", "zoom_burst", "impact_frame", "bounce_zoom"],
-      OUTRO:    ["letterbox_pan", "tilt_reveal", "rack_focus", "parallax"],
+      OUTRO:    [],
     },
   },
 
@@ -135,24 +135,24 @@ const EDIT_STYLES = {
 
     effects: [
       "breathe",        // sinusoidal zoom — characteristic smooth flow effect
-      "pan_right",      // horizontal pan — movement without zoom
+           // horizontal pan — movement without zoom
       "ken_burns",      // classic slow zoom + diagonal pan
       "breathe_slow",   // slower sinusoidal — calm moments
       "zoom_in",        // simple linear zoom
       "pan_left",       // pan opposite direction for variety
       "zoom_out",       // pull back for wide shots
-      "ken_burns_fast", // faster ken burns at chorus peaks
-      "tilt_shift",     // cinematic depth of field feel
+      // faster ken burns at chorus peaks
+          // cinematic depth of field feel
       "spin_cw",        // gentle circular pan for high-energy moments
     ],
     transitions: [
       "dissolve",       // standard clean dissolve
       "push_right",     // slide right — continuous feel
-      "dissolve_glow",  // glow dissolve — warm
-      "cross_zoom",     // zoom blend — dynamic moments
+       // glow dissolve — warm
+          // zoom blend — dynamic moments
       "fadewhite",      // white fade — airy
-      "dissolve_fast",  // quick clean cut
-      "ripple",         // water ripple — lofi aesthetic
+       // quick clean cut
+              // water ripple — lofi aesthetic
       "push_left",      // slide left
     ],
     grades: [
@@ -170,13 +170,13 @@ const EDIT_STYLES = {
       "lens_flare",     // highlight glow
     ],
     compositions: {
-      INTRO:    ["slide_in_left", "rack_focus", "letterbox_pan"],
-      VERSE_1:  ["parallax", "rack_focus", "letterbox_pan", "slide_in_right"],
-      CHORUS_1: ["three_panel", "bounce_zoom", "impact_frame", "manga_panels"],
-      BRIDGE:   ["spotlight_zoom", "parallax", "mirror_composite"],
-      CHORUS_2: ["bounce_zoom", "three_panel", "impact_frame"],
+      INTRO:    ["swipe_in_left"],
+      VERSE_1:  ["swipe_in_right"],
+      CHORUS_1: ["bounce_zoom", "impact_frame"],
+      BRIDGE:   ["spotlight_zoom"],
+      CHORUS_2: ["bounce_zoom", "impact_frame"],
       CLIMAX:   ["impact_frame", "bounce_zoom", "shockwave"],
-      OUTRO:    ["letterbox_pan", "parallax", "rack_focus"],
+      OUTRO:    [],
     },
   },
 
@@ -200,21 +200,21 @@ const EDIT_STYLES = {
       "ken_burns_slow", // very slow zoom + pan — signature emotional effect
       "drift_left",     // extremely slow leftward drift — melancholic feel
       "echo_trail",     // dreamy oscillation — emotional signature
-      "drift_right",    // rightward drift — gentle movement
+         // rightward drift — gentle movement
       "static",         // no motion — hold on a face, pure emotion
       "breathe_slow",   // ultra-slow sinusoidal — barely breathing
       "zoom_out",       // slow pull-back — sense of loss
-      "tilt_shift",     // depth of field — cinematic sadness
+          // depth of field — cinematic sadness
       "pan_left",       // slow pan — searching feel
       "ken_burns",      // moderate zoom — for mid-energy moments
     ],
     transitions: [
-      "dissolve_slow",  // very slow blend — characteristic emotional transition
-      "dissolve_glow",  // glow blend — spiritual/emotional
-      "fadeblack_slow", // slow fade to black — weight of sadness
+       // very slow blend — characteristic emotional transition
+       // glow blend — spiritual/emotional
+      // slow fade to black — weight of sadness
       "dissolve",       // standard blend
       "fadeblack",      // fade black — closing feeling
-      "ripple",         // liquid distortion — tears
+              // liquid distortion — tears
       "zoom_blur_out",  // blur out — losing focus
       "push_left",      // slow leftward push
     ],
@@ -234,13 +234,13 @@ const EDIT_STYLES = {
       "particles",       // dust/tears floating
     ],
     compositions: {
-      INTRO:    ["rack_focus", "letterbox_pan", "tilt_reveal"],
-      VERSE_1:  ["parallax", "rack_focus", "letterbox_pan", "tilt_reveal"],
+      INTRO:    [],
+      VERSE_1:  [],
       CHORUS_1: ["spotlight_zoom", "impact_frame", "bounce_zoom"],
-      BRIDGE:   ["mirror_composite", "vhs_composite", "spotlight_zoom"],
+      BRIDGE:   ["vhs_composite", "spotlight_zoom"],
       CHORUS_2: ["impact_frame", "bounce_zoom", "shockwave"],
       CLIMAX:   ["impact_frame", "shockwave", "zoom_burst"],
-      OUTRO:    ["letterbox_pan", "parallax", "rack_focus", "tilt_reveal"],
+      OUTRO:    [],
     },
   },
 
@@ -262,23 +262,23 @@ const EDIT_STYLES = {
 
     effects: [
       "breathe_slow",   // ultra-soft sinusoidal — dreamy breathing
-      "drift_right",    // gentle rightward drift — flowing
+         // gentle rightward drift — flowing
       "echo_trail",     // oscillating drift — dreamy and soft
-      "pan_right",      // smooth pan — idol-like movement
+           // smooth pan — idol-like movement
       "zoom_out",       // soft pull-back — open and airy
       "spin_cw",        // slow rotation — artistic carousel
       "breathe",        // sinusoidal — soft and alive
       "drift_left",     // leftward flow — aesthetic signature
       "ken_burns_slow", // very slow zoom — for face close-ups
-      "tilt_shift",     // depth of field — artsy
+          // depth of field — artsy
     ],
     transitions: [
-      "dissolve_glow",  // glow blend — signature aesthetic transition
+       // glow blend — signature aesthetic transition
       "fadewhite",      // white fade — airy and bright
       "dissolve",       // standard clean blend
-      "dissolve_slow",  // long dreamy blend
-      "cross_zoom",     // dynamic zoom blend — energy moments
-      "ripple",         // water ripple — romantic
+       // long dreamy blend
+          // dynamic zoom blend — energy moments
+              // water ripple — romantic
       "zoom_blur_in",   // zoom into light — dreamy
       "push_right",     // soft rightward push
     ],
@@ -299,13 +299,13 @@ const EDIT_STYLES = {
       "film_grain",     // analog texture
     ],
     compositions: {
-      INTRO:    ["slide_in_left", "tilt_reveal", "rack_focus"],
-      VERSE_1:  ["parallax", "letterbox_pan", "rack_focus", "tilt_reveal"],
-      CHORUS_1: ["three_panel", "bounce_zoom", "spotlight_zoom", "manga_panels"],
-      BRIDGE:   ["neon_frame", "spotlight_zoom", "mirror_composite"],
-      CHORUS_2: ["bounce_zoom", "three_panel", "zoom_burst"],
+      INTRO:    ["swipe_in_left"],
+      VERSE_1:  [],
+      CHORUS_1: ["bounce_zoom", "spotlight_zoom"],
+      BRIDGE:   ["neon_frame", "spotlight_zoom"],
+      CHORUS_2: ["bounce_zoom", "zoom_burst"],
       CLIMAX:   ["zoom_burst", "impact_frame", "shockwave", "bounce_zoom"],
-      OUTRO:    ["letterbox_pan", "parallax", "tilt_reveal", "rack_focus"],
+      OUTRO:    [],
     },
   },
 };

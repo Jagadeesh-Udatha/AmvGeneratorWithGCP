@@ -38,46 +38,39 @@
 // ═════════════════════════════════════════════════════════════════════════════
 
 const MOTION_EFFECTS = new Set([
-  // Zoom family (5)
+  // Zoom — pure scale change, no pan
   "zoom_pulse",        // sawtooth zoom synced to beat frequency
-  "zoom_punch",        // aggressive snap-zoom in (sharp sawtooth, bigger range)
+  "zoom_punch",        // aggressive snap-zoom in
   "zoom_punch_out",    // aggressive snap-zoom out
   "zoom_in",           // linear zoom in 1.0→1.2
   "zoom_out",          // linear zoom out 1.2→1.0
-  // Ken Burns family (3)
+  // Ken Burns — zoom + diagonal pan
   "ken_burns",         // classic slow zoom + diagonal pan
-  "ken_burns_fast",    // faster ken burns for high-energy scenes
   "ken_burns_slow",    // very slow ken burns for emotional scenes
-  // Pan family (4)
-  "pan_left",          // horizontal pan left at z=1.15
-  "pan_right",         // horizontal pan right at z=1.15
-  "drift_left",        // very slow gentle drift left
-  "drift_right",       // very slow gentle drift right
-  // Breathe family (3)
+  // Pan — single direction per effect (left = camera moves right)
+  "pan_left",          // horizontal pan, z=1.15, 8% width travel
+  "drift_left",        // slow gentle drift, z=1.08, 3% width travel
+  // Breathe — sinusoidal zoom pulse at beat frequency
   "breathe",           // sinusoidal zoom synced to beat count
   "breathe_fast",      // high-freq sinusoidal zoom
   "breathe_slow",      // low-freq sinusoidal zoom (emotional)
-  // Shake family (2)
+  // Shake — high-frequency oscillation
   "shake_horizontal",  // horizontal oscillation (hype/action)
   "shake_vertical",    // vertical oscillation
-  // Spin family (2)
-  "spin_cw",           // clockwise circular pan motion
+  // Spin — circular pan motion
+  "spin_cw",           // clockwise circular pan
   "spin_ccw",          // counter-clockwise circular pan
-  // Tilt (1)
-  "tilt_shift",        // slight zoom + y drift, simulated tilt
-  // Glitch / FX family (3)
+  // Glitch / FX
   "glitch_horizontal", // jittery x-offset jumps
-  "glitch_flash",      // rapid alternating zoom levels (strobe-like)
+  "glitch_flash",      // rapid alternating zoom (strobe-like)
   "vhs_shake",         // analog VHS tracking jitter
-  // Speed ramp family (2)
-  "speed_ramp_in",     // accelerating zoom in (slow start, fast end)
-  "speed_ramp_out",    // decelerating zoom out (fast start, slow end)
-  // Punch family (1)
-  "freeze_punch",      // hold still 80% of duration, then snap zoom at end
-  // Trail (1)
+  // Speed ramp
+  "speed_ramp_in",     // accelerating zoom in
+  "speed_ramp_out",    // decelerating zoom out
+  // Special
+  "freeze_punch",      // hold still, then snap zoom at end
   "echo_trail",        // slow drift with slight oscillation (dreamy)
-  // Null (1)
-  "static",            // no motion, slight zoom for framing
+  "static",            // no motion
 ]);
 
 /**
@@ -274,39 +267,28 @@ function buildMotionFilter(name, { duration, fps = 30, w, h, beatOffsets = [], f
 // ═════════════════════════════════════════════════════════════════════════════
 
 const TRANSITIONS = new Set([
-  // Flash family (3)
-  "flash_white",       // bright white flash cut
-  "flash_black",       // black flash cut
-  "strobe_cut",        // rapid flash strobe (ultra-short)
-  // Zoom family (3)
-  "zoom_blur_in",      // zoom-in blur transition
-  "zoom_blur_out",     // zoom-out blur transition
-  "cross_zoom",        // zoom cross-dissolve
-  // Slide / Wipe family (5)
-  "whip_pan_left",     // fast pan-cover left
-  "whip_pan_right",    // fast pan-cover right
-  "push_left",         // push/slide left
-  "push_right",        // push/slide right
-  "wipe_down",         // vertical wipe downward
-  // Slice family (2)
-  "slice_left",        // horizontal slice reveal left
-  "slice_right",       // horizontal slice reveal right
-  // Dissolve family (4)
-  "dissolve",          // standard dissolve (medium duration)
-  "dissolve_fast",     // dissolve with short duration
-  "dissolve_slow",     // dissolve with long duration
-  "dissolve_glow",     // dissolve with brightness bump
-  // Fade family (4)
-  "fadeblack",         // fade through black (default)
-  "fadeblack_fast",    // fade through black (short)
-  "fadeblack_slow",    // fade through black (long)
-  "fadewhite",         // fade through white
-  // Glitch / FX family (2)
-  "glitch_cut",        // digital glitch pixelation
-  "pixelize",          // pixelation transition
-  // Special (2)
-  "ripple",            // ripple/wave transition
-  "film_burn",         // bright overexposure burn transition
+  // Flash
+  "flash_white",    // fade through white — bright cut
+  "flash_black",    // fade through black — dark cut
+  // Zoom
+  "zoom_blur_in",   // zoom-in blur entry
+  "zoom_blur_out",  // zoom-out blur entry
+  // Slide / Wipe
+  "whip_pan_left",  // fast cover left
+  "whip_pan_right", // fast cover right
+  "push_left",      // slide content left
+  "push_right",     // slide content right
+  "wipe_down",      // vertical wipe downward
+  // Slice
+  "slice_left",     // horizontal slice left
+  "slice_right",    // horizontal slice right
+  // Dissolve
+  "dissolve",       // standard cross-dissolve
+  // Fade
+  "fadeblack",      // fade through black
+  "fadewhite",      // fade through white
+  // Glitch
+  "glitch_cut",     // pixelation glitch
 ]);
 
 /**

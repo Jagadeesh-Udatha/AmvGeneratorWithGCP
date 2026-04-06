@@ -87,24 +87,23 @@ const EDIT_PATTERNS = [
   { name:"Aggressive Beat Sync",score:9,  conditions:{bpmMin:130,energyMin:0.60},
     style:{transitions:["flash_black","whip_pan_left","slice_left"],      effects:["zoom_punch","zoom_pulse","shake_horizontal"], grades:["hype_blue","cinematic","neon"],       cutSpeed:"fast",   transitionDur:0.06}},
   { name:"Hype Cinematic",      score:8,  conditions:{bpmMin:120,energyMin:0.55,centroidMin:0.55},
-    style:{transitions:["whip_pan_right","flash_black","glitch_cut"],     effects:["zoom_punch_out","pan_right","zoom_in"],       grades:["cinematic","hype_red","neon"],        cutSpeed:"fast",   transitionDur:0.08}},
+    style:{transitions:["whip_pan_right","flash_black","glitch_cut"],     effects:["zoom_punch_out","zoom_in"],       grades:["cinematic","hype_red","neon"],        cutSpeed:"fast",   transitionDur:0.08}},
   { name:"Epic Reveal",         score:10, conditions:{energyMin:0.65,centroidMin:0.60,bpmMin:110,bpmMax:140},
-    style:{transitions:["flash_black","cross_zoom","zoom_blur_in"],       effects:["zoom_out","ken_burns_fast","pan_right"],      grades:["triumphant_gold","cinematic"],        cutSpeed:"medium", transitionDur:0.12}},
+    style:{transitions:["flash_black","zoom_blur_in"],       effects:["zoom_out"],      grades:["triumphant_gold","cinematic"],        cutSpeed:"medium", transitionDur:0.12}},
   { name:"Triumphant Build",    score:8,  conditions:{energyMin:0.55,centroidMin:0.55,bpmMin:100},
-    style:{transitions:["cross_zoom","dissolve","push_right"],            effects:["zoom_out","ken_burns","spin_cw"],             grades:["triumphant_gold","cinematic","none"],  cutSpeed:"medium", transitionDur:0.15}},
+    style:{transitions:["dissolve","push_right"],            effects:["zoom_out","ken_burns","spin_cw"],             grades:["triumphant_gold","cinematic","none"],  cutSpeed:"medium", transitionDur:0.15}},
   { name:"Emotional Slow Burn", score:10, conditions:{bpmMax:85,energyMax:0.30},
-    style:{transitions:["dissolve","dissolve_glow","fadeblack"],          effects:["ken_burns_slow","breathe_slow","drift_left"], grades:["sad_blue","sad_grey","vintage"],       cutSpeed:"slow",   transitionDur:0.35}},
+    style:{transitions:["dissolve","fadeblack"],          effects:["ken_burns_slow","breathe_slow","drift_left"], grades:["sad_blue","sad_grey","vintage"],       cutSpeed:"slow",   transitionDur:0.35}},
   { name:"Sad Cinematic",       score:9,  conditions:{bpmMax:100,energyMax:0.40,onsetMax:0.40},
-    style:{transitions:["dissolve","dissolve_glow","push_left"],          effects:["ken_burns_slow","breathe_slow","pan_left"],   grades:["sad_blue","sad_grey","cinematic"],     cutSpeed:"slow",   transitionDur:0.30}},
+    style:{transitions:["dissolve","push_left"],          effects:["ken_burns_slow","breathe_slow","pan_left"],   grades:["sad_blue","sad_grey","cinematic"],     cutSpeed:"slow",   transitionDur:0.30}},
   { name:"Melancholic Drift",   score:7,  conditions:{bpmMax:110,energyMax:0.45,centroidMax:0.45},
-    style:{transitions:["dissolve","ripple","push_left"],                 effects:["breathe_slow","ken_burns_slow","drift_left"], grades:["sad_grey","vintage","sad_blue"],       cutSpeed:"slow",   transitionDur:0.25}},
+    style:{transitions:["dissolve","push_left"],                 effects:["breathe_slow","ken_burns_slow","drift_left"], grades:["sad_grey","vintage","sad_blue"],       cutSpeed:"slow",   transitionDur:0.25}},
   { name:"Romantic Flow",       score:9,  conditions:{bpmMin:80,bpmMax:125,energyMin:0.25,energyMax:0.55,onsetMax:0.45},
-    style:{transitions:["dissolve","dissolve_glow","fadewhite"],          effects:["breathe_slow","ken_burns_slow","drift_right"],grades:["romantic_warm","romantic_soft","vintage"],cutSpeed:"medium",transitionDur:0.22}},
+    style:{transitions:["dissolve","fadewhite"],          effects:["breathe_slow","ken_burns_slow"],grades:["romantic_warm","romantic_soft","vintage"],cutSpeed:"medium",transitionDur:0.22}},
   { name:"Hopeful Rise",        score:7,  conditions:{bpmMin:90,bpmMax:130,centroidMin:0.40,energyMax:0.60},
-    style:{transitions:["dissolve","cross_zoom","push_right"],            effects:["zoom_in","breathe","ken_burns"],              grades:["romantic_warm","cinematic","none"],     cutSpeed:"medium", transitionDur:0.20}},
+    style:{transitions:["dissolve","push_right"],            effects:["zoom_in","breathe","ken_burns"],              grades:["romantic_warm","cinematic","none"],     cutSpeed:"medium", transitionDur:0.20}},
   { name:"Standard Edit",       score:0,  conditions:{},
-    style:{transitions:["dissolve","push_left","flash_black"],            effects:["zoom_pulse","ken_burns","zoom_in"],           grades:["cinematic","none","vintage"],           cutSpeed:"medium", transitionDur:0.18}},
-];
+    style:{transitions:["dissolve","push_left","flash_black"],            effects:["zoom_pulse","ken_burns","zoom_in"],           grades:["cinematic","none","vintage"],           cutSpeed:"medium", transitionDur:0.18}}];
 
 function scorePattern(p, f) {
   const c = p.conditions;
@@ -284,26 +283,25 @@ function getSongSection(position) {
 // Previously each section had only 3-5 options; now 6-8 so rolling-window
 // variety enforcement doesn't exhaust the pool after 3 scenes.
 const SECTION_COMPOSITIONS = {
-  INTRO:    ["character_reveal", "slide_in_left", "letterbox_pan", "tilt_reveal", "rack_focus", "slide_in_right"],
-  VERSE_1:  ["parallax", "rack_focus", "letterbox_pan", "slide_in_right", "ken_burns", "tilt_reveal", "slide_in_left"],
-  CHORUS_1: ["impact_frame", "three_panel", "bounce_zoom", "manga_panels", "shockwave", "diagonal_split", "quad_grid"],
-  BRIDGE:   ["mirror_composite", "vhs_composite", "rack_focus", "spotlight_zoom", "parallax", "neon_frame"],
-  CHORUS_2: ["shockwave", "zoom_burst", "diagonal_split", "quad_grid", "impact_frame", "three_panel", "bounce_zoom"],
-  CLIMAX:   ["impact_frame", "shockwave", "bounce_zoom", "three_panel", "zoom_burst", "manga_panels", "quad_grid"],
-  OUTRO:    ["letterbox_pan", "parallax", "rack_focus", "tilt_reveal", "slide_in_left"],
+  INTRO:    ["character_reveal", "swipe_in_left", "swipe_in_right"],
+  VERSE_1:  ["swipe_in_right", "swipe_in_left"],
+  CHORUS_1: ["impact_frame", "bounce_zoom", "shockwave"],
+  BRIDGE:   ["vhs_composite", "spotlight_zoom", "neon_frame"],
+  CHORUS_2: ["shockwave", "zoom_burst", "impact_frame", "bounce_zoom"],
+  CLIMAX:   ["impact_frame", "shockwave", "bounce_zoom", "zoom_burst"],
+  OUTRO:    ["swipe_in_left"],
 };
 
 // Visual-feature-based overrides (highest priority)
 const VISUAL_COMPOSITIONS = [
-  { test: (vf, ds) => vf.face_present && ds < 0.4,  comps: ["spotlight_zoom", "rack_focus", "character_reveal"], reason: "face close-up with low energy" },
+  { test: (vf, ds) => vf.face_present && ds < 0.4,  comps: ["spotlight_zoom", "character_reveal"], reason: "face close-up with low energy" },
   { test: (vf, ds) => vf.face_present && ds >= 0.6,  comps: ["character_reveal", "bounce_zoom", "impact_frame"], reason: "face with high-energy beat drop" },
-  { test: (vf, ds) => vf.dark_scene && ds > 0.5,     comps: ["neon_frame", "mirror_composite", "shockwave"], reason: "dark scene with energy" },
-  { test: (vf, ds) => vf.dark_scene && ds <= 0.5,    comps: ["mirror_composite", "vhs_composite", "rack_focus"], reason: "dark moody scene" },
-  { test: (vf, ds) => vf.action_scene && ds > 0.6,   comps: ["three_panel", "manga_panels", "impact_frame", "shockwave"], reason: "action scene on beat drop" },
-  { test: (vf, ds) => vf.action_scene,               comps: ["manga_panels", "diagonal_split", "three_panel"], reason: "action scene with detail" },
-  { test: (vf, ds) => vf.saturation > 0.6,           comps: ["quad_grid", "manga_panels", "three_panel"], reason: "vivid colorful image" },
-  { test: (vf, ds) => vf.warm_dominant && ds < 0.4,  comps: ["parallax", "letterbox_pan", "rack_focus"], reason: "warm tones, calm energy" },
-];
+  { test: (vf, ds) => vf.dark_scene && ds > 0.5,     comps: ["neon_frame", "shockwave"], reason: "dark scene with energy" },
+  { test: (vf, ds) => vf.dark_scene && ds <= 0.5,    comps: ["vhs_composite"], reason: "dark moody scene" },
+  { test: (vf, ds) => vf.action_scene && ds > 0.6,   comps: ["manga_panels", "impact_frame", "shockwave"], reason: "action scene on beat drop" },
+  { test: (vf, ds) => vf.action_scene,               comps: ["manga_panels"], reason: "action scene with detail" },
+  { test: (vf, ds) => vf.saturation > 0.6,           comps: ["manga_panels"], reason: "vivid colorful image" },
+  { test: (vf, ds) => vf.warm_dominant && ds < 0.4,  comps: [], reason: "warm tones, calm energy" }];
 
 function pickComposition(scene, position, recentComps, sceneIdx, totalScenes, songSeed = 0) {
   const section = getSongSection(position);
@@ -482,7 +480,7 @@ function suggestEffects(scenes, globalFeatures, beatData, editStyleId = null) {
       // Step C: Face-aware override within the style pool
       if (vf.face_present) {
         const styleFaceEffects = editStyle.effects.filter(e =>
-          ["breathe", "breathe_slow", "ken_burns_slow", "zoom_in", "ken_burns", "rack_focus", "spotlight_zoom"].includes(e)
+          ["breathe", "breathe_slow", "ken_burns_slow", "zoom_in", "ken_burns", "spotlight_zoom"].includes(e)
         );
         if (styleFaceEffects.length > 0) {
           const faceEffect = pickWithVariety(styleFaceEffects, recentEffects, i, songSeed);
@@ -572,7 +570,7 @@ function suggestEffects(scenes, globalFeatures, beatData, editStyleId = null) {
     // ── Step 3: Section-aware overrides ──
     if (isIntro) {
       if (energy < 0.5) {
-        const gentleEffects = ["ken_burns_slow", "breathe_slow", "drift_right", "ken_burns"];
+        const gentleEffects = ["ken_burns_slow", "breathe_slow", "ken_burns"];
         effect = pickWithVariety(gentleEffects, recentEffects, i, songSeed) || effect;
       }
       if (i === 0) transition = "dissolve";
@@ -580,7 +578,7 @@ function suggestEffects(scenes, globalFeatures, beatData, editStyleId = null) {
     if (isOutro) {
       const outroEffects = ["zoom_out", "ken_burns_slow", "breathe_slow", "drift_left"];
       effect = pickWithVariety(outroEffects, recentEffects, i, songSeed) || effect;
-      const outroTransitions = ["dissolve_slow", "fadeblack_slow", "dissolve"];
+      const outroTransitions = ["dissolve"];
       transition = pickWithVariety(outroTransitions, recentTransitions, i, songSeed) || transition;
     }
 
