@@ -371,7 +371,7 @@ def extract_visual_route():
 
 @app.route("/extract-visual-batch", methods=["POST"])
 def extract_visual_batch_route():
-    """Extract visual features from multiple images in one call."""
+    """Extract visual features (including expression) from multiple images."""
     data = request.get_json(force=True, silent=True) or {}
     image_paths = data.get("image_paths", [])
 
@@ -395,6 +395,149 @@ def extract_visual_batch_route():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+
+@app.route("/expression-sort", methods=["POST"])
+def expression_sort_route():
+    """
+    Analyze expressions in images and return sorted order to match an emotion arc.
+
+    Input:
+        {
+          "image_paths": ["/path/to/img1.jpg", ...],
+          "emotion_arc": ["hype", "sad", "neutral", ...]   // from audio analysis
+        }
+
+    Output:
+        {
+          "success": true,
+          "sorted_paths": [...],          // paths reordered to match emotion arc
+          "expression_map": {             // what expression was detected per image
+            "/path/img1.jpg": {
+              "expression": "happy",
+              "scores": {...},
+              "face_detected": true
+            }
+          }
+        }
+
+    HOW MATCHING WORKS:
+        Expression → compatible music emotions:
+          happy      → hype, triumphant          (energy, celebration)
+          angry      → hype                      (battle, intensity)
+          surprised  → hype, triumphant          (shock, impact)
+          sad        → sad, romantic              (melancholy)
+          calm       → romantic, neutral, smooth  (peaceful)
+          no_face    → neutral (scored by scene)
+
+        For each position in the emotion_arc, the best-matching unused image is chosen.
+        "Best match" = highest compatibility score between image expression and target emotion.
+    """
+    data = request.get_json(force=True, silent=True) or {}
+    image_paths = data.get("image_paths", [])
+    emotion_arc = data.get("emotion_arc", [])
+
+    if not image_paths:
+        return jsonify({"error": "No image_paths provided"}), 400
+
+    try:
+        from visual_features import detect_expression
+    except ImportError as e:
+        return jsonify({"error": f"Missing dependency: {e}"}), 500
+
+    # Expression → music emotion compatibility matrix
+    # Rows = detected expressions, Cols = target music emotions
+    # Score 0.0-1.0: how well this expression fits that music emotion
+    COMPAT = {
+        #                hype  triumphant  sad  romantic  neutral
+        "happy":     {"hype": 0.8, "triumphant": 1.0, "sad": 0.0, "romantic": 0.4, "neutral": 0.3},
+        "angry":     {"hype": 1.0, "triumphant": 0.5, "sad": 0.2, "romantic": 0.0, "neutral": 0.2},
+        "surprised": {"hype": 0.9, "triumphant": 0.7, "sad": 0.1, "romantic": 0.1, "neutral": 0.3},
+        "sad":       {"hype": 0.0, "triumphant": 0.1, "sad": 1.0, "romantic": 0.8, "neutral": 0.4},
+        "calm":      {"hype": 0.1, "triumphant": 0.3, "sad": 0.5, "romantic": 0.9, "neutral": 1.0},
+        "no_face":   {"hype": 0.5, "triumphant": 0.5, "sad": 0.5, "romantic": 0.5, "neutral": 0.8},
+    }
+
+    # Analyze all images
+    expression_map = {}
+    for path in image_paths:
+        if os.path.exists(path):
+            result = detect_expression(path)
+            expression_map[path] = result
+            expr = result["dominant_expression"]
+            conf = result["confidence"]
+            face = "✓ face" if result["face_detected"] else "no face"
+            print(f"   🎭 {os.path.basename(path)}: {expr} ({conf:.2f}) [{face}]")
+        else:
+            expression_map[path] = {"dominant_expression": "calm", "scores": {}, "face_detected": False, "confidence": 0.0}
+
+    # If no emotion arc, sort by energy (hype first → sad last)
+    if not emotion_arc:
+        emotion_arc = ["hype"] * len(image_paths)
+
+    def compat_score(path, target_emotion):
+        """Compatibility score between image expression and target music emotion."""
+        expr_result = expression_map.get(path, {})
+        expr = expr_result.get("dominant_expression", "calm")
+        conf = expr_result.get("confidence", 0.5)
+        scores = expr_result.get("scores", {})
+
+        # Primary: use compatibility matrix
+        base_compat = COMPAT.get(expr, COMPAT["calm"]).get(target_emotion, 0.5)
+
+        # Secondary: use weighted sum across all detected expression scores
+        weighted = 0.0
+        for detected_expr, expr_score in scores.items():
+            weighted += expr_score * COMPAT.get(detected_expr, COMPAT["calm"]).get(target_emotion, 0.5)
+
+        # Blend: 60% primary, 40% weighted (handles uncertain detections better)
+        final = 0.60 * base_compat + 0.40 * weighted
+
+        # Boost if expression was detected with high confidence and face was found
+        if expr_result.get("face_detected") and conf > 0.5:
+            final = min(1.0, final * 1.15)
+
+        return final
+
+    # Greedy assignment: for each arc position, pick best unused image
+    used   = set()
+    sorted_paths = []
+
+    for target_emotion in emotion_arc:
+        best_path  = None
+        best_score = -1.0
+        for path in image_paths:
+            if path in used:
+                continue
+            score = compat_score(path, target_emotion)
+            if score > best_score:
+                best_score = score
+                best_path  = path
+        if best_path:
+            used.add(best_path)
+            sorted_paths.append(best_path)
+
+    # Append any images not yet assigned (more images than arc positions)
+    for path in image_paths:
+        if path not in used:
+            sorted_paths.append(path)
+
+    print(f"   ✅ Expression sort: {len(sorted_paths)} images ordered for {len(set(emotion_arc))} emotion types")
+
+    return jsonify({
+        "success": True,
+        "sorted_paths": sorted_paths,
+        "original_paths": image_paths,
+        "expression_map": {
+            path: {
+                "expression": expression_map[path].get("dominant_expression", "calm"),
+                "face_detected": expression_map[path].get("face_detected", False),
+                "confidence": expression_map[path].get("confidence", 0.0),
+                "scores": expression_map[path].get("scores", {}),
+                "face_bbox": expression_map[path].get("face_bbox", None),
+            }
+            for path in image_paths
+        }
+    })
 
 # ── BACKGROUND REMOVAL ───────────────────────────────────────────────────────
 
@@ -487,4 +630,32 @@ if __name__ == "__main__":
     print(f"   Visual features: /extract-visual, /extract-visual-batch")
     print(f"   Background removal: /remove-bg (requires rembg + onnxruntime)")
     print(f"   Classes: hype / triumphant / sad / romantic / neutral")
+
+    # ── Startup check: mediapipe for face landmark detection ─────────────────
+    import sys
+    try:
+        import mediapipe
+        mp_ok = True
+        print(f"   Face landmarks: ✅ mediapipe {mediapipe.__version__} (face-based expression detection)")
+    except ImportError:
+        mp_ok = False
+        print(f"   Face landmarks: ❌ mediapipe NOT installed in this Python ({sys.executable})")
+        print(f"")
+        print(f"   ⚠️  EXPRESSION DETECTION DEGRADED — all images will return 'calm'")
+        print(f"")
+        print(f"   FIX (run in a new terminal, then restart this service):")
+        print(f"   {sys.executable} -m pip install mediapipe")
+        print(f"")
+        print(f"   If mediapipe is in a venv, use the venv Python to run this service:")
+        print(f"   /path/to/venv/bin/python3 beat_detector.py")
+
+    # Check face_landmarker.task model
+    model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "face_landmarker.task")
+    if os.path.exists(model_path) and os.path.getsize(model_path) > 100000:
+        size_mb = os.path.getsize(model_path) / (1024 * 1024)
+        print(f"   Landmark model:  ✅ face_landmarker.task ({size_mb:.1f}MB)")
+    else:
+        print(f"   Landmark model:  ❌ face_landmarker.task not found")
+        print(f"   Download: python3 -c \"import urllib.request; urllib.request.urlretrieve('https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task', 'face_landmarker.task')\"")
+
     app.run(host="0.0.0.0", port=port, debug=False)
