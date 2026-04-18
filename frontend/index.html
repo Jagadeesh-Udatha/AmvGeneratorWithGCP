@@ -92,10 +92,168 @@ canvas.wavecanvas{width:100%;height:50px;display:block}
 const {useState,useEffect,useRef,useCallback,useMemo}=React;
 const API="http://localhost:4000";
 const EMOTION_META={hype:{color:"#f87171",icon:"⚡",label:"Hype"},triumphant:{color:"#fbbf24",icon:"🏆",label:"Epic"},sad:{color:"#60a5fa",icon:"💙",label:"Sad"},romantic:{color:"#f472b6",icon:"💗",label:"Romantic"},neutral:{color:"#a78bfa",icon:"✦",label:"Neutral"}};
-const COMP_CATEGORIES={all:{label:"All",compositions:[]},panels:{label:"Panels",compositions:["three_panel","manga_panels","quad_grid","diagonal_split"]},reveals:{label:"Reveals",compositions:["character_reveal","vertical_wipe","slide_in_left","slide_in_right","slide_in_top","curtain_open"]},focus:{label:"Focus",compositions:["spotlight_zoom","parallax","rack_focus"]},impact:{label:"Impact",compositions:["impact_frame","bounce_zoom","zoom_burst","shockwave"]},cinematic:{label:"Cinematic",compositions:["letterbox_pan","tilt_reveal","mirror_composite","neon_frame","vhs_composite"]}};
-const COMP_DESCRIPTIONS={three_panel:"3 vertical strips",manga_panels:"2-panel manga split",quad_grid:"2×2 grid zooms",diagonal_split:"Diagonal depth offset",character_reveal:"Tight zoom → full frame",vertical_wipe:"Top-down reveal",slide_in_left:"Slides from left",slide_in_right:"Slides from right",slide_in_top:"Drops from top",curtain_open:"Curtains open",spotlight_zoom:"Center over blur bg",parallax:"Fake depth layers",rack_focus:"BG blur → fg sharp",impact_frame:"Flash → snap zoom",bounce_zoom:"Elastic overshoot",zoom_burst:"Rapid pull-back",shockwave:"Radial pulse out",letterbox_pan:"Cinematic bars + pan",tilt_reveal:"Camera tilt-up",mirror_composite:"Mirror + fade",neon_frame:"Animated neon border",vhs_composite:"VHS tracking look"};
-const DEFAULT_EFFECTS=["zoom_pulse","zoom_punch","zoom_punch_out","zoom_in","zoom_out","ken_burns","ken_burns_fast","ken_burns_slow","pan_left","pan_right","drift_left","drift_right","breathe","breathe_fast","breathe_slow","shake_horizontal","shake_vertical","spin_cw","spin_ccw","tilt_shift","glitch_horizontal","glitch_flash","vhs_shake","speed_ramp_in","speed_ramp_out","freeze_punch","echo_trail","static"];
-const DEFAULT_TRANSITIONS=["flash_white","flash_black","strobe_cut","zoom_blur_in","zoom_blur_out","cross_zoom","whip_pan_left","whip_pan_right","push_left","push_right","wipe_down","slice_left","slice_right","dissolve","dissolve_fast","dissolve_slow","dissolve_glow","fadeblack","fadeblack_fast","fadeblack_slow","fadewhite","glitch_cut","pixelize","ripple","film_burn"];
+/* COMPOSITION REGISTRY — exact mirror of backend COMPOSITIONS set (22 total).
+   Removed: three_panel, film_strip, quad_grid, diagonal_split (panel complexity),
+            vertical_wipe (fragile cover-crop), parallax (complex coordinate system),
+            triptych_reveal (14-segment filter graph, too heavy). */
+const COMP_CATEGORIES={
+  all:{label:"All",compositions:[]},
+  reveals:{label:"Reveals",compositions:["character_reveal","swipe_in_left","swipe_in_right","swipe_in_top","curtain_open"]},
+  focus:{label:"Focus",compositions:["spotlight_zoom","neon_frame","vhs_composite"]},
+  impact:{label:"Impact",compositions:["impact_frame","bounce_zoom","zoom_burst","shockwave"]},
+  multi:{label:"Multi",compositions:["beat_stack_3","door_open","photo_wall_sweep","pip_corner"]}
+};
+const COMP_DESCRIPTIONS={
+  character_reveal:"Punch zoom 3× → 1× easeOutCubic",
+  swipe_in_left:"Enters from left — easeOutCubic settle",
+  swipe_in_right:"Enters from right — easeOutCubic settle",
+  swipe_in_top:"Drops from top — easeOutCubic settle",
+  curtain_open:"Black curtains slide apart — reveals image",
+  spotlight_zoom:"Blurred bg + sharp fg zooms in + drifts",
+  neon_frame:"Cyan/magenta border + slow zoom",
+  vhs_composite:"VHS jitter + chromatic aberration + noise",
+  impact_frame:"White flash + 2.2× punch-zoom",
+  bounce_zoom:"Damped spring oscillation",
+  zoom_burst:"Fast zoom-in power deceleration",
+  shockwave:"Exponential decay zoom + vignette pulse",
+  beat_stack_3:"3 horizontal strips slide up on beats",
+  door_open:"Door panels slide apart revealing bg",
+  photo_wall_sweep:"2×2 image wall — camera pan sweep",
+  pip_corner:"Full frame + PIP slides in from right"
+};
+
+// ─── SHARED EASING (mirrors animationContract.js exactly) ─────────────────────
+const Easing={
+  easeOutCubic:  p=>1-Math.pow(1-Math.min(1,Math.max(0,p)),3),
+  easeInCubic:   p=>Math.pow(Math.min(1,Math.max(0,p)),3),
+  easeInOutCubic:p=>{p=Math.min(1,Math.max(0,p));return p<0.5?4*p*p*p:1-Math.pow(-2*p+2,3)/2;},
+  spring:        p=>{p=Math.min(1,Math.max(0,p));return 1-Math.exp(-6*p)*Math.cos(12*p);},
+  linear:        p=>Math.min(1,Math.max(0,p)),
+};
+function easingAt(name,p){return(Easing[name]||Easing.easeOutCubic)(p);}
+function lerpVal(a,b,p,easing){return a+(b-a)*easingAt(easing,p);}
+
+// ─── COMPOSITION KEYFRAME STRIP ────────────────────────────────────────────────
+// Renders a compact horizontal timeline showing animation layers for selected composition.
+// Uses the SAME contract data that animationContract.js provides to FFmpeg.
+function CompositionKeyframeStrip({composition,duration,beatOffsets}){
+  const W=280,H=56;
+  const ref=useRef(null);
+  const contract=useMemo(()=>{
+    if(!composition||!COMP_DESCRIPTIONS[composition])return null;
+    // Build inline contracts matching animationContract.js getContracts()
+    const dur=duration||2;
+    const w=1080,h=1920;
+    const swD=Math.min(0.45,dur*0.38);
+    const opD=Math.min(0.70,dur*0.50);
+    const rvD=Math.min(1.0,dur*0.65);
+    const beats=beatOffsets||[];
+    const b0=beats[0]||0,b1=beats[1]||(dur*0.33),b2=beats[2]||(dur*0.66);
+    const contracts={
+      character_reveal:[{t:"zoom",tg:"main",s:0,d:dur,e:"easeOutCubic",fSc:3.0,toSc:1.02,col:"#ef4444"}],
+      swipe_in_left:[{t:"trans",tg:"main",s:0,d:swD,e:"easeOutCubic",fX:-w,toX:0,col:"#22c55e"},{t:"zoom",tg:"main",s:0,d:dur,e:"easeInOutCubic",fSc:1.0,toSc:1.06,col:"#8b5cf6"}],
+      swipe_in_right:[{t:"trans",tg:"main",s:0,d:swD,e:"easeOutCubic",fX:w,toX:0,col:"#22c55e"},{t:"zoom",tg:"main",s:0,d:dur,e:"easeInOutCubic",fSc:1.0,toSc:1.06,col:"#8b5cf6"}],
+      swipe_in_top:[{t:"trans",tg:"main",s:0,d:swD,e:"easeOutCubic",fY:-h,toY:0,col:"#22c55e"},{t:"zoom",tg:"main",s:0,d:dur,e:"easeInOutCubic",fSc:1.0,toSc:1.06,col:"#8b5cf6"}],
+      curtain_open:[{t:"zoom",tg:"img",s:0,d:dur,e:"easeInOutCubic",fSc:1.02,toSc:1.08,col:"#8b5cf6"},{t:"trans",tg:"L-curtain",s:0,d:opD,e:"easeOutCubic",fX:0,toX:-w/2,col:"#64748b"},{t:"trans",tg:"R-curtain",s:0,d:opD,e:"easeOutCubic",fX:w/2,toX:w,col:"#94a3b8"}],
+      spotlight_zoom:[{t:"zoom",tg:"bg",s:0,d:dur,e:"easeInOutCubic",fSc:1.02,toSc:1.06,col:"#0284c7"},{t:"zoom",tg:"fg+drift",s:0,d:dur,e:"easeOutCubic",fSc:1.0,toSc:1.35,col:"#8b5cf6"}],
+      rack_focus:[{t:"zoom",tg:"bg",s:0,d:dur,e:"easeInOutCubic",fSc:1.04,toSc:1.10,col:"#0284c7"},{t:"zoom",tg:"fg",s:0,d:dur,e:"easeOutCubic",fSc:1.0,toSc:1.14,col:"#8b5cf6"}],
+      impact_frame:[{t:"zoom",tg:"main",s:0,d:dur,e:"easeOutCubic",fSc:2.2,toSc:1.05,col:"#ef4444"},{t:"fade",tg:"flash",s:0,d:Math.max(0.1,dur*0.15),e:"linear",fSc:1,toSc:0,col:"#fbbf24"}],
+      bounce_zoom:[{t:"zoom",tg:"main",s:0,d:dur,e:"spring",fSc:1.05,toSc:1.27,col:"#8b5cf6"}],
+      zoom_burst:[{t:"zoom",tg:"main+jitter",s:0,d:dur,e:"easeOutCubic",fSc:2.5,toSc:1.05,col:"#ef4444"}],
+      shockwave:[{t:"zoom",tg:"main",s:0,d:dur,e:"easeOutCubic",fSc:1.23,toSc:1.05,col:"#f59e0b"}],
+      letterbox_pan:[{t:"trans",tg:"main",s:0,d:dur,e:"easeOutCubic",fX:0,toX:w*0.12,col:"#06b6d4"}],
+      tilt_reveal:[{t:"trans",tg:"main",s:0,d:dur,e:"linear",fX:0,toX:h*0.12,col:"#06b6d4"}],
+      mirror_composite:[{t:"trans",tg:"bg",s:0,d:dur,e:"linear",fX:0,toX:w*0.06,col:"#0284c7"},{t:"fade",tg:"ghost@50%",s:0,d:dur,e:"linear",fSc:0.50,toSc:0.50,col:"#8b5cf6"}],
+      neon_frame:[{t:"zoom",tg:"main",s:0,d:dur,e:"easeInOutCubic",fSc:1.0,toSc:1.08,col:"#00ffff"}],
+      vhs_composite:[{t:"zoom",tg:"jitter",s:0,d:dur,e:"linear",fSc:1.05,toSc:1.05,col:"#22c55e"}],
+      beat_stack_3:[{t:"trans",tg:"strip0",s:b0,d:0.28,e:"easeOutCubic",fX:0,toX:-h,col:"#06b6d4"},{t:"trans",tg:"strip1",s:b1,d:0.28,e:"easeOutCubic",fX:0,toX:-h,col:"#0284c7"},{t:"trans",tg:"strip2",s:b2,d:0.28,e:"easeOutCubic",fX:0,toX:-h,col:"#0369a1"}],
+      door_open:[{t:"zoom",tg:"bg",s:0,d:dur,e:"easeInOutCubic",fSc:1.0,toSc:1.10,col:"#8b5cf6"},{t:"trans",tg:"L-door",s:0,d:opD,e:"easeOutCubic",fX:0,toX:-w/2,col:"#64748b"},{t:"trans",tg:"R-door",s:0,d:opD,e:"easeOutCubic",fX:w/2,toX:w,col:"#94a3b8"}],
+      photo_wall_sweep:[{t:"trans",tg:"wall+drift",s:0,d:dur,e:"linear",fX:0,toX:Math.max(0,Math.floor(w*0.55)*2+8-w),col:"#06b6d4"}],
+      cinematic_duo:[{t:"zoom",tg:"top(face)",s:0,d:dur,e:"easeInOutCubic",fSc:1.0,toSc:1.06,col:"#8b5cf6"},{t:"zoom",tg:"bottom",s:0,d:dur,e:"easeInOutCubic",fSc:1.0,toSc:1.08,col:"#7c3aed"}],
+      pip_corner:[{t:"zoom",tg:"bg",s:0,d:dur,e:"spring",fSc:1.02,toSc:1.08,col:"#8b5cf6"},{t:"trans",tg:"pip",s:b0,d:0.30,e:"easeOutCubic",fX:w,toX:w-Math.floor(w*0.30)-20,col:"#22c55e"}],
+      cross_reveal:[{t:"trans",tg:"left",s:0,d:Math.min(dur*0.5,0.55),e:"easeOutCubic",fX:-w/2,toX:0,col:"#06b6d4"},{t:"trans",tg:"right",s:0,d:Math.min(dur*0.5,0.55),e:"easeOutCubic",fX:w/2,toX:w/2+4,col:"#0284c7"}],
+    };
+    return contracts[composition]||null;
+  },[composition,duration,beatOffsets]);
+
+  useEffect(()=>{
+    const canvas=ref.current;if(!canvas||!contract)return;
+    const dpr=window.devicePixelRatio||1;
+    canvas.width=W*dpr;canvas.height=H*dpr;
+    const ctx=canvas.getContext("2d");ctx.scale(dpr,dpr);
+    ctx.clearRect(0,0,W,H);
+    const dur=duration||2;
+    const rowH=Math.max(10,Math.floor((H-16)/Math.min(contract.length,5)));
+    const LABEL_W=52;
+    const trackW=W-LABEL_W-4;
+
+    // Time ruler
+    ctx.fillStyle="rgba(255,255,255,0.06)";
+    ctx.fillRect(LABEL_W,0,trackW,H);
+    // Ruler ticks every 0.5s
+    const tickStep=0.5;
+    for(let t=0;t<=dur;t+=tickStep){
+      const x=LABEL_W+Math.round((t/dur)*trackW);
+      ctx.strokeStyle="rgba(255,255,255,0.12)";ctx.lineWidth=1;
+      ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();
+      if(t>0&&t<dur){ctx.fillStyle="rgba(255,255,255,0.25)";ctx.font="6px DM Sans";ctx.fillText(t.toFixed(1)+"s",x+2,8);}
+    }
+
+    contract.slice(0,5).forEach((layer,i)=>{
+      const y=8+i*rowH;
+      const x0=LABEL_W+Math.round((layer.s/dur)*trackW);
+      const barW=Math.max(6,Math.round((layer.d/dur)*trackW));
+      const col=layer.col||"#8b5cf6";
+
+      // Bar background
+      ctx.fillStyle=col+"33";
+      ctx.beginPath();ctx.roundRect(x0,y,barW,rowH-2,3);ctx.fill();
+
+      // Easing curve preview inside bar
+      const steps=Math.max(2,barW);
+      ctx.beginPath();
+      for(let s=0;s<=steps;s++){
+        const p2=s/steps;
+        const val=easingAt(layer.e,p2);
+        const px2=x0+s;
+        const py2=y+(rowH-2)*(1-val*0.8);
+        s===0?ctx.moveTo(px2,py2):ctx.lineTo(px2,py2);
+      }
+      ctx.strokeStyle=col+"cc";ctx.lineWidth=1.5;ctx.stroke();
+
+      // Start/end markers
+      ctx.fillStyle=col;
+      ctx.beginPath();ctx.arc(x0,y+(rowH-2)/2,2.5,0,Math.PI*2);ctx.fill();
+      ctx.beginPath();ctx.arc(x0+barW,y+(rowH-2)/2,2.5,0,Math.PI*2);ctx.fill();
+
+      // Label
+      ctx.fillStyle="rgba(255,255,255,0.6)";ctx.font="bold 7px DM Sans";
+      const typeIcon={zoom:"⊕",trans:"→",cover:"▓",fade:"◑"}[layer.t]||"•";
+      ctx.fillText(typeIcon+" "+layer.tg.slice(0,6),2,y+rowH-3);
+    });
+  },[contract,duration]);
+
+  if(!composition||!contract)return null;
+  return(
+    <div style={{marginTop:10,padding:'8px 10px',background:'var(--bg2)',borderRadius:8,border:'1px solid var(--border)'}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
+        <span style={{fontSize:8,fontWeight:700,color:'var(--text3)',textTransform:'uppercase',letterSpacing:1}}>Animation Contract</span>
+        <span style={{fontSize:8,color:'var(--accent2)'}}>{contract.length} layer{contract.length!==1?"s":""}</span>
+      </div>
+      <canvas ref={ref} style={{width:W,height:H,display:'block',borderRadius:4}}/>
+      <div style={{marginTop:6,display:'flex',gap:8,flexWrap:'wrap'}}>
+        {[...new Set(contract.map(l=>l.e))].map(e=>(
+          <span key={e} style={{fontSize:7,padding:'2px 6px',borderRadius:4,background:'rgba(139,92,246,0.12)',color:'var(--accent2)'}}>{e}</span>
+        ))}
+        {contract.some(l=>l.t==="trans")&&<span style={{fontSize:7,padding:'2px 6px',borderRadius:4,background:'rgba(34,197,94,0.12)',color:'#22c55e'}}>→ translate</span>}
+        {contract.some(l=>l.t==="zoom")&&<span style={{fontSize:7,padding:'2px 6px',borderRadius:4,background:'rgba(139,92,246,0.12)',color:'#a78bfa'}}>⊕ zoom</span>}
+        {contract.some(l=>l.t==="cover")&&<span style={{fontSize:7,padding:'2px 6px',borderRadius:4,background:'rgba(100,116,139,0.12)',color:'#94a3b8'}}>▓ mask</span>}
+      </div>
+    </div>
+  );
+}
+const DEFAULT_EFFECTS=["zoom_pulse","zoom_punch","zoom_punch_out","zoom_in","zoom_out","ken_burns","ken_burns_slow","pan_left","drift_left","breathe","breathe_fast","breathe_slow","shake_horizontal","shake_vertical","spin_cw","spin_ccw","glitch_horizontal","glitch_flash","vhs_shake","speed_ramp_in","speed_ramp_out","freeze_punch","echo_trail","static"];
+const DEFAULT_TRANSITIONS=["flash_white","flash_black","zoom_blur_in","zoom_blur_out","whip_pan_left","whip_pan_right","push_left","push_right","wipe_down","slice_left","slice_right","dissolve","fadeblack","fadewhite","glitch_cut"];
 const DEFAULT_GRADES=["none","cinematic","teal_orange","anime_bright","hype_red","hype_blue","hype_green","hype_purple","neon","sad_blue","sad_grey","romantic_warm","romantic_soft","triumphant_gold","sunset_gold","horror_red","cold_steel","vintage","manga"];
 const DEFAULT_OVERLAYS=["vignette","vignette_strong","film_grain","film_grain_heavy","scanlines","scanlines_strong","lens_flare","speed_lines","chromatic_aberration","chromatic_strong","particles","rain","snow","dirt_overlay","glow_soft","halftone"];
 const GEN_STEPS=[{id:"beats",l:"Analyzing beats + emotions",i:"🎵"},{id:"llm",l:"AI editor compositing decisions",i:"🤖"},{id:"render",l:"Rendering scenes with effects",i:"⚡"}];
@@ -212,7 +370,7 @@ function TimelineEditor({sessionId,scenes:initScenes,totalDur,beatData,audioUrl,
             <div style={{display:'flex',gap:2,marginBottom:12,flexWrap:'wrap'}}>
               {[["composition","🎬"],["effect","✨"],["transition","↔"],["grade","🎨"],["overlays","🌀"]].map(([t,icon])=>(<button key={t} onClick={()=>setPropTab(t)} style={{flex:'0 0 auto',padding:'4px 9px',border:'1px solid var(--border2)',borderRadius:6,background:propTab===t?'var(--accent)':'none',color:propTab===t?'#fff':'var(--text3)',fontSize:9,fontWeight:700,cursor:'pointer',fontFamily:'DM Sans',transition:'all .15s'}}>{icon} {t.charAt(0).toUpperCase()+t.slice(1)}</button>))}
             </div>
-            {propTab==="composition"&&(<div><div style={{fontSize:9,color:'var(--text3)',marginBottom:8,lineHeight:1.5}}>Cinematic multi-layer compositions.{selected.composition&&<span style={{color:'var(--cyan)'}}> Active: {selected.composition.replace(/_/g,' ')}</span>}</div><CompositionPicker value={selected.composition||null} onChange={c=>doRerender({composition:c})} disabled={rerendering!==null}/></div>)}
+            {propTab==="composition"&&(<div><div style={{fontSize:9,color:'var(--text3)',marginBottom:8,lineHeight:1.5}}>Cinematic multi-layer compositions.{selected.composition&&<span style={{color:'var(--cyan)'}}> Active: {selected.composition.replace(/_/g,' ')}</span>}</div><CompositionPicker value={selected.composition||null} onChange={c=>doRerender({composition:c})} disabled={rerendering!==null}/><CompositionKeyframeStrip composition={selected.composition||null} duration={selected.duration||2} beatOffsets={beatData?.beats?.slice(0,3)||[]}/></div>)}
             {propTab==="effect"&&(<div>{selected.composition&&(<div style={{fontSize:9,color:'var(--amber)',marginBottom:8,padding:'5px 8px',background:'rgba(251,191,36,.06)',borderRadius:6,border:'1px solid rgba(251,191,36,.15)'}}>⚠ Composition active — effect overridden.</div>)}<label className="lbl">Motion Effect</label><div className="effect-grid">{EFFECTS.map(ef=>(<button key={ef} className={"effect-chip"+(selected.effect===ef?" selected":"")} onClick={()=>doRerender({effect:ef})} disabled={rerendering!==null}>{ef.replace(/_/g," ")}</button>))}</div></div>)}
             {propTab==="transition"&&(<div><label className="lbl">Transition out</label><select className="sel" value={selected.transition||"dissolve"} style={{fontSize:11,marginBottom:8}} onChange={e=>{setTransPreview(null);doRerender({transition:e.target.value})}} disabled={rerendering!==null}>{TRANSITIONS.map(tr=><option key={tr} value={tr}>{tr.replace(/_/g," ")}</option>)}</select>{selIdx>0&&(<button className="btn-s" onClick={previewTransitionFn} disabled={rerendering!==null||(transPreview&&transPreview.loading)} style={{width:'100%',textAlign:'center',padding:'7px 0',fontSize:10}}>{transPreview?.loading?"⏳ Rendering...":"🔀 Preview Transition"}</button>)}{transPreview?.url&&(<div style={{marginTop:8,borderRadius:8,overflow:'hidden',border:'1px solid var(--border)'}}><video src={transPreview.url} controls autoPlay loop muted playsInline style={{width:'100%',display:'block'}}/></div>)}</div>)}
             {propTab==="grade"&&(<div><label className="lbl">Color Grade</label><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:4,marginTop:4}}>{GRADES.map(g=>(<button key={g} className={"effect-chip"+(selected.colorGrade===g?" selected":"")} style={{fontSize:9}} onClick={()=>doRerender({colorGrade:g})} disabled={rerendering!==null}>{g.replace(/_/g," ")||"none"}</button>))}</div></div>)}
@@ -247,8 +405,8 @@ function MarketplaceTab(){
 }
 
 function App(){
-  const [tab,setTab]=useState("amv");const [health,setHealth]=useState(null);const [history,setHist]=useState([]);const [error,setErr]=useState(null);const [options,setOptions]=useState(null);
-  const [audioFile,setAF]=useState(null);const [mediaFiles,setMF]=useState([]);const [beatData,setBD]=useState(null);const [analyzing,setAna]=useState(false);const [sensitivity,setSens]=useState(0.5);const [ar,setAR]=useState("9:16");const [maxDur,setMaxDur]=useState(30);const [generating,setGen]=useState(false);const [genStep,setGStep]=useState(-1);const [genProg,setGProg]=useState(0);const [genResult,setGRes]=useState(null);const [classifierInfo,setClassInfo]=useState(null);const [dbStats,setDbStats]=useState(null);
+  const [tab,setTab]=useState("amv");const [health,setHealth]=useState(null);const [beatOk,setBeatOk]=useState(null);const [history,setHist]=useState([]);const [error,setErr]=useState(null);const [options,setOptions]=useState(null);
+  const [audioFile,setAF]=useState(null);const [mediaFiles,setMF]=useState([]);const [beatData,setBD]=useState(null);const [analyzing,setAna]=useState(false);const [sensitivity,setSens]=useState(0.5);const [editStyle,setEditStyle]=useState(null);const [ar,setAR]=useState("9:16");const [maxDur,setMaxDur]=useState(30);const [generating,setGen]=useState(false);const [genStep,setGStep]=useState(-1);const [genProg,setGProg]=useState(0);const [genResult,setGRes]=useState(null);const [classifierInfo,setClassInfo]=useState(null);const [dbStats,setDbStats]=useState(null);
   const [currentJobId,setJobId]=useState(null);const [jobMode,setJobMode]=useState("idle");
   const [editorMode,setEditor]=useState(false);const [sessionId,setSid]=useState(null);const [scenes,setScenes]=useState([]);const [totalDur,setTDur]=useState(30);const [audioUrl,setAudioUrl]=useState(null);
   const [autoExporting,setAutoExporting]=useState(false);
@@ -264,7 +422,7 @@ function App(){
   const hasByok=!!(byokAnthropic||byokGemini||byokOpenai);
   function getByokHeaders(){const h={};if(byokAnthropic)h['x-anthropic-key']=byokAnthropic;if(byokGemini)h['x-gemini-key']=byokGemini;if(byokOpenai)h['x-openai-key']=byokOpenai;return h;}
 
-  useEffect(()=>{fetch(API+"/health").then(r=>r.json()).then(setHealth).catch(()=>{});fetch(API+"/api/video/list").then(r=>r.json()).then(d=>setHist(d.videos||[])).catch(()=>{});fetch(API+"/api/amv/model-info").then(r=>r.json()).then(d=>setClassInfo(d.classifier)).catch(()=>{});fetch(API+"/api/amv/db-stats").then(r=>r.json()).then(d=>setDbStats(d.stats)).catch(()=>{});fetch(API+"/api/amv/options").then(r=>r.json()).then(setOptions).catch(()=>{});},[]);
+  useEffect(()=>{fetch(API+"/health").then(r=>r.json()).then(setHealth).catch(()=>{});fetch(API+"/api/video/list").then(r=>r.json()).then(d=>setHist(d.videos||[])).catch(()=>{});fetch(API+"/api/amv/model-info").then(r=>r.json()).then(d=>setClassInfo(d.classifier)).catch(()=>{});fetch(API+"/api/amv/db-stats").then(r=>r.json()).then(d=>setDbStats(d.stats)).catch(()=>{});fetch(API+"/api/amv/options").then(r=>r.json()).then(setOptions).catch(()=>{});fetch("http://localhost:5051/health").then(r=>r.json()).then(d=>setBeatOk(d.status==="ok")).catch(()=>setBeatOk(false));},[]);
 
   async function uploadFiles(files){const fd=new FormData();files.forEach(f=>fd.append("files",f));const r=await fetch(API+"/api/amv/upload",{method:"POST",body:fd});const d=await r.json();if(!r.ok||!d.success)throw new Error(d.error||"Upload failed");return d.files;}
   async function analyze(fp,s){setAna(true);try{const r=await fetch(API+"/api/amv/analyze",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({audio_path:fp,sensitivity:s})});setBD(await r.json());}catch(e){setBD({fallback:true,error:e.message})}finally{setAna(false)}}
@@ -275,7 +433,7 @@ function App(){
   async function handleGenerate(){
     if(!audioFile||!mediaFiles.length)return;
     setGen(true);setErr(null);setGRes(null);setGStep(0);setGProg(5);setJobId(null);setJobMode("analyzing");setEditor(false);setAutoExporting(false);sessionReadyRef.current=false;
-    try{const r=await fetch(API+"/api/amv/prepare",{method:"POST",headers:{"Content-Type":"application/json",...getByokHeaders()},body:JSON.stringify({audio_path:audioFile.path,media_paths:mediaFiles.map(f=>f.path),sensitivity,aspect_ratio:ar,max_duration:maxDur,async_mode:true})});
+    try{const r=await fetch(API+"/api/amv/prepare",{method:"POST",headers:{"Content-Type":"application/json",...getByokHeaders()},body:JSON.stringify({audio_path:audioFile.path,media_paths:mediaFiles.map(f=>f.path),sensitivity,aspect_ratio:ar,max_duration:maxDur,edit_style:editStyle||null,async_mode:true})});
     const d=await r.json();if(!r.ok||!d.success)throw new Error(d.error||"Generation failed");setGProg(30);setGStep(1);setJobId(d.jobId);setJobMode("rendering");if(d.scenes)setScenes(d.scenes);if(d.totalDuration)setTDur(d.totalDuration);setSid(d.sessionId);if(d.audioUrl)setAudioUrl(d.audioUrl);
     }catch(e){setErr(e.message);setGProg(0);setGStep(-1);setJobMode("idle");}finally{setGen(false)}}
 
@@ -366,7 +524,7 @@ function App(){
                 <div style={{marginTop:8}}><label className="lbl">Beat Sensitivity</label><div className="slider-wrap"><span style={{fontSize:9,color:'var(--text3)'}}>Fewer</span><input type="range" className="slider" min={0} max={1} step={0.05} value={sensitivity} onChange={e=>setSens(parseFloat(e.target.value))} onMouseUp={reanalyze} onTouchEnd={reanalyze}/><span style={{fontSize:9,color:'var(--text3)'}}>More</span><span className="slider-val">{Math.round(sensitivity*100)}%</span></div></div>
                 {analyzing&&<div style={{fontSize:10,color:'var(--accent2)',marginTop:6,display:'flex',gap:4,alignItems:'center'}}><span className="spinning">⟳</span>Analyzing...</div>}
                 {beatData&&!beatData.fallback&&(<><WaveformPreview energy={beatData.energy_curve} beats={beatData.beats} drops={beatData.drops} dropEmotions={beatData.drop_emotions} duration={beatData.duration} bpm={beatData.bpm}/>{emoSummary&&(<div style={{display:'flex',gap:4,flexWrap:'wrap',marginTop:6}}>{Object.entries(emoSummary).map(([emo,cnt])=>{const m=EMOTION_META[emo]||EMOTION_META.neutral;return <span key={emo} style={{display:'inline-flex',alignItems:'center',gap:3,padding:'2px 6px',borderRadius:8,fontSize:8,fontWeight:700,background:m.color+'18',color:m.color,border:'1px solid '+m.color+'33'}}>{m.icon} {m.label} ×{cnt}</span>;})}</div>)}</>)}
-                {beatData?.fallback&&<div className="warnbox">⚠ Beat detector offline<br/><code>python3 beat_detector.py</code></div>}
+                {(beatData?.fallback||beatOk===false)&&<div className="warnbox">⚠ Beat detector offline<br/><code>python3 beat_detector.py</code></div>}
               </div>)}
             </div>
             <div className="card"><div className="clabel">🖼️ Media Files</div>
@@ -375,12 +533,42 @@ function App(){
             </div>
             <div className="card"><div className="clabel">⚙️ Settings</div><div className="row2"><div className="field"><label className="lbl">Max Duration</label><input type="number" className="inp" min={5} max={120} value={maxDur} onChange={e=>setMaxDur(parseInt(e.target.value)||30)} style={{fontSize:11}}/></div><div className="field"><label className="lbl">Aspect Ratio</label><select className="sel" value={ar} onChange={e=>setAR(e.target.value)} style={{fontSize:11}}><option value="9:16">9:16 TikTok</option><option value="16:9">16:9 YouTube</option></select></div></div></div>
 
+            <div className="card">
+              <div className="clabel">🎨 Edit Style</div>
+              <div style={{fontSize:9,color:'var(--text3)',marginBottom:8,lineHeight:1.6}}>How should the video feel? Overrides the auto emotion detection.</div>
+              <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:5}}>
+                {[
+                  {id:null,   icon:'🤖',label:'Auto',     desc:'Let beats decide'},
+                  {id:'hard_cut',  icon:'⚡',label:'Hard Cut',  desc:'Flash cuts & snap zooms'},
+                  {id:'cinematic', icon:'🎬',label:'Cinematic', desc:'Epic & wide graded'},
+                  {id:'smooth_flow',icon:'🌊',label:'Smooth',   desc:'Fluid dissolves & breathe'},
+                  {id:'emotional', icon:'💙',label:'Emotional', desc:'Slow drifts & blue tones'},
+                  {id:'aesthetic', icon:'✨',label:'Aesthetic', desc:'Dreamy glow & pastels'},
+                ].map(s=>{
+                  const active=editStyle===s.id;
+                  return(<button key={s.id||'auto'} onClick={()=>setEditStyle(s.id)}
+                    style={{padding:'7px 4px',borderRadius:8,border:'1.5px solid '+(active?'var(--pink)':'var(--border)'),
+                      background:active?'rgba(236,72,153,.12)':'transparent',cursor:'pointer',
+                      display:'flex',flexDirection:'column',alignItems:'center',gap:2,transition:'all .15s'}}>
+                    <span style={{fontSize:18}}>{s.icon}</span>
+                    <span style={{fontSize:8,fontWeight:700,color:active?'var(--pink)':'var(--text)'}}>{s.label}</span>
+                    <span style={{fontSize:7,color:'var(--text3)',textAlign:'center',lineHeight:1.3}}>{s.desc}</span>
+                  </button>);
+                })}
+              </div>
+              {editStyle&&options?.edit_styles?.[editStyle]&&(
+                <div style={{marginTop:8,padding:'6px 8px',borderRadius:6,background:'rgba(236,72,153,.06)',fontSize:8,color:'var(--text2)',lineHeight:1.7}}>
+                  <b style={{color:'var(--pink)'}}>{options.edit_styles[editStyle].label}</b> — {options.edit_styles[editStyle].description}
+                </div>
+              )}
+            </div>
+
             <div className="card" style={{background:'linear-gradient(135deg,var(--surface) 0%,rgba(139,92,246,.06) 100%)'}}>
               <div className="clabel">🚀 Create</div>
               <button className={"btn btn-p"+(isWorking?" gen-pulse":"")} style={{background:'linear-gradient(135deg,var(--accent) 0%,var(--pink) 100%)',fontSize:13,padding:'14px 16px'}} onClick={handleGenerate} disabled={!canGenerate||isWorking}>
                 {isWorking?(jobMode==="rendering"?"⏳ AI Rendering Scenes...":"🤖 AI Analyzing..."):"🎬 Generate AMV"}
               </button>
-              <div style={{fontSize:9,color:'var(--text3)',textAlign:'center',marginTop:6,lineHeight:1.6}}>{canGenerate?"AI analyzes beats → picks compositions, effects, transitions → renders all scenes":"Upload music + media to enable"}</div>
+              <div style={{fontSize:9,color:'var(--text3)',textAlign:'center',marginTop:6,lineHeight:1.6}}>{canGenerate?(editStyle?`Style: ${options?.edit_styles?.[editStyle]?.label||editStyle} · AI renders all scenes`:"AI analyzes beats → picks compositions, effects, transitions → renders all scenes"):"Upload music + media to enable"}</div>
             </div>
           </div>
 
@@ -420,7 +608,7 @@ function App(){
 
           <div>
             <div className="card"><div className="clabel">💡 How It Works</div><div style={{fontSize:10,color:'var(--text2)',lineHeight:1.9}}><p><b>1.</b> Upload music + anime images</p><p><b>2.</b> Click <b style={{color:'var(--pink)'}}>Generate AMV</b></p><p style={{paddingLeft:14,fontSize:9,color:'var(--text3)'}}>AI analyzes beats · LLM picks compositions, effects, transitions, grades · renders scenes</p><p><b>3.</b> Review and open editor</p><p style={{paddingLeft:14,fontSize:9,color:'var(--text3)'}}>Audio playback · change per-scene settings · import/export presets</p><p><b>4.</b> Export final video</p></div></div>
-            <div className="card"><div className="clabel">🔌 System</div><div className="srow"><span className="slbl">Server</span><span className={"sbadge "+(health?"sok":"serr")}>{health?"Online":"Offline"}</span></div><div className="srow"><span className="slbl">LLM Editor</span><span className={"sbadge "+(health?.config?.llm==="configured"?"sok":"swarn")}>{health?.config?.llm==="configured"?"Ready":"No key"}</span></div><div className="srow"><span className="slbl">Beat detector</span><span className="sbadge swarn">:5051</span></div><div className="srow"><span className="slbl">Classifier</span><span className={"sbadge "+(classifierInfo?.type==="ml"?"sok":"swarn")}>{classifierInfo?.type==="ml"?"🧠 ML":"📐 Rules"}</span></div>{dbStats?.enabled&&(<div style={{marginTop:8,fontSize:9,color:'var(--text3)',lineHeight:1.7}}>DB: {dbStats.sessions} sessions · {dbStats.editedScenes} edits<br/>Cache: {dbStats.cacheEntries} · Compositions: {dbStats.compositions}</div>)}</div>
+            <div className="card"><div className="clabel">🔌 System</div><div className="srow"><span className="slbl">Server</span><span className={"sbadge "+(health?"sok":"serr")}>{health?"Online":"Offline"}</span></div><div className="srow"><span className="slbl">LLM Editor</span><span className={"sbadge "+(health?.config?.llm==="configured"?"sok":"swarn")}>{health?.config?.llm==="configured"?"Ready":"No key"}</span></div><div className="srow"><span className="slbl">Beat detector</span><span className={"sbadge "+(beatOk===null?"swarn":beatOk?"sok":"serr")}>{beatOk===null?"Checking…":beatOk?"Online :5051":"Offline"}</span></div><div className="srow"><span className="slbl">Classifier</span><span className={"sbadge "+(classifierInfo?.type==="ml"?"sok":"swarn")}>{classifierInfo?.type==="ml"?"🧠 ML":"📐 Rules"}</span></div>{dbStats?.enabled&&(<div style={{marginTop:8,fontSize:9,color:'var(--text3)',lineHeight:1.7}}>DB: {dbStats.sessions} sessions · {dbStats.editedScenes} edits<br/>Cache: {dbStats.cacheEntries} · Compositions: {dbStats.compositions}</div>)}</div>
             <div className="card"><div className="clabel">📁 Recent ({history.length})</div>{history.length===0?<div style={{fontSize:9,color:'var(--text3)',textAlign:'center',padding:'10px 0'}}>No videos yet</div>:history.slice(0,8).map((v,i)=>(<div key={i} className="hitem"><div><div className="hname">{v.filename}</div><div className="hdate">{new Date(v.createdAt).toLocaleString()}</div></div><button className="pbtn" onClick={()=>setGRes({video:{url:v.url}})}>▶</button></div>))}</div>
           </div>
         </div>

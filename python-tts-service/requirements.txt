@@ -3,5 +3,10 @@ flask-cors==4.0.1
 edge-tts==6.1.12
 gTTS==2.5.3
 
-# Phase 3 — AMV Edit Classifier Training (optional)
+# Background removal (magnetic mask feature)
+# Installs onnxruntime automatically as a dependency
+rembg==2.0.57
+onnxruntime>=1.16.0
+
+# Phase 3 -- AMV Edit Classifier Training (optional)
 # Install separately: pip install -r requirements-trainer.txt

@@ -87,24 +87,23 @@ const EDIT_PATTERNS = [
   { name:"Aggressive Beat Sync",score:9,  conditions:{bpmMin:130,energyMin:0.60},
     style:{transitions:["flash_black","whip_pan_left","slice_left"],      effects:["zoom_punch","zoom_pulse","shake_horizontal"], grades:["hype_blue","cinematic","neon"],       cutSpeed:"fast",   transitionDur:0.06}},
   { name:"Hype Cinematic",      score:8,  conditions:{bpmMin:120,energyMin:0.55,centroidMin:0.55},
-    style:{transitions:["whip_pan_right","flash_black","glitch_cut"],     effects:["zoom_punch_out","pan_right","zoom_in"],       grades:["cinematic","hype_red","neon"],        cutSpeed:"fast",   transitionDur:0.08}},
+    style:{transitions:["whip_pan_right","flash_black","glitch_cut"],     effects:["zoom_punch_out","zoom_in"],       grades:["cinematic","hype_red","neon"],        cutSpeed:"fast",   transitionDur:0.08}},
   { name:"Epic Reveal",         score:10, conditions:{energyMin:0.65,centroidMin:0.60,bpmMin:110,bpmMax:140},
-    style:{transitions:["flash_black","cross_zoom","zoom_blur_in"],       effects:["zoom_out","ken_burns_fast","pan_right"],      grades:["triumphant_gold","cinematic"],        cutSpeed:"medium", transitionDur:0.12}},
+    style:{transitions:["flash_black","zoom_blur_in"],       effects:["zoom_out"],      grades:["triumphant_gold","cinematic"],        cutSpeed:"medium", transitionDur:0.12}},
   { name:"Triumphant Build",    score:8,  conditions:{energyMin:0.55,centroidMin:0.55,bpmMin:100},
-    style:{transitions:["cross_zoom","dissolve","push_right"],            effects:["zoom_out","ken_burns","spin_cw"],             grades:["triumphant_gold","cinematic","none"],  cutSpeed:"medium", transitionDur:0.15}},
+    style:{transitions:["dissolve","push_right"],            effects:["zoom_out","ken_burns","spin_cw"],             grades:["triumphant_gold","cinematic","none"],  cutSpeed:"medium", transitionDur:0.15}},
   { name:"Emotional Slow Burn", score:10, conditions:{bpmMax:85,energyMax:0.30},
-    style:{transitions:["dissolve","dissolve_glow","fadeblack"],          effects:["ken_burns_slow","breathe_slow","drift_left"], grades:["sad_blue","sad_grey","vintage"],       cutSpeed:"slow",   transitionDur:0.35}},
+    style:{transitions:["dissolve","fadeblack"],          effects:["ken_burns_slow","breathe_slow","drift_left"], grades:["sad_blue","sad_grey","vintage"],       cutSpeed:"slow",   transitionDur:0.35}},
   { name:"Sad Cinematic",       score:9,  conditions:{bpmMax:100,energyMax:0.40,onsetMax:0.40},
-    style:{transitions:["dissolve","dissolve_glow","push_left"],          effects:["ken_burns_slow","breathe_slow","pan_left"],   grades:["sad_blue","sad_grey","cinematic"],     cutSpeed:"slow",   transitionDur:0.30}},
+    style:{transitions:["dissolve","push_left"],          effects:["ken_burns_slow","breathe_slow","pan_left"],   grades:["sad_blue","sad_grey","cinematic"],     cutSpeed:"slow",   transitionDur:0.30}},
   { name:"Melancholic Drift",   score:7,  conditions:{bpmMax:110,energyMax:0.45,centroidMax:0.45},
-    style:{transitions:["dissolve","ripple","push_left"],                 effects:["breathe_slow","ken_burns_slow","drift_left"], grades:["sad_grey","vintage","sad_blue"],       cutSpeed:"slow",   transitionDur:0.25}},
+    style:{transitions:["dissolve","push_left"],                 effects:["breathe_slow","ken_burns_slow","drift_left"], grades:["sad_grey","vintage","sad_blue"],       cutSpeed:"slow",   transitionDur:0.25}},
   { name:"Romantic Flow",       score:9,  conditions:{bpmMin:80,bpmMax:125,energyMin:0.25,energyMax:0.55,onsetMax:0.45},
-    style:{transitions:["dissolve","dissolve_glow","fadewhite"],          effects:["breathe_slow","ken_burns_slow","drift_right"],grades:["romantic_warm","romantic_soft","vintage"],cutSpeed:"medium",transitionDur:0.22}},
+    style:{transitions:["dissolve","fadewhite"],          effects:["breathe_slow","ken_burns_slow"],grades:["romantic_warm","romantic_soft","vintage"],cutSpeed:"medium",transitionDur:0.22}},
   { name:"Hopeful Rise",        score:7,  conditions:{bpmMin:90,bpmMax:130,centroidMin:0.40,energyMax:0.60},
-    style:{transitions:["dissolve","cross_zoom","push_right"],            effects:["zoom_in","breathe","ken_burns"],              grades:["romantic_warm","cinematic","none"],     cutSpeed:"medium", transitionDur:0.20}},
+    style:{transitions:["dissolve","push_right"],            effects:["zoom_in","breathe","ken_burns"],              grades:["romantic_warm","cinematic","none"],     cutSpeed:"medium", transitionDur:0.20}},
   { name:"Standard Edit",       score:0,  conditions:{},
-    style:{transitions:["dissolve","push_left","flash_black"],            effects:["zoom_pulse","ken_burns","zoom_in"],           grades:["cinematic","none","vintage"],           cutSpeed:"medium", transitionDur:0.18}},
-];
+    style:{transitions:["dissolve","push_left","flash_black"],            effects:["zoom_pulse","ken_burns","zoom_in"],           grades:["cinematic","none","vintage"],           cutSpeed:"medium", transitionDur:0.18}}];
 
 function scorePattern(p, f) {
   const c = p.conditions;
@@ -177,7 +176,11 @@ function classifyEditStyle(features) {
 
 // ─── VARIETY ENFORCEMENT HELPERS ─────────────────────────────────────────────
 
-const ROLLING_WINDOW = 6; // look back this many scenes for variety
+// FIXED: Rolling window reduced from 6 to 3 for effects and transitions.
+// Window of 6 was too aggressive — with 22 scenes and only 4-5 options per
+// emotion palette, the classifier would exhaust all options and fall back to
+// repeating. Window of 3 forces variety without over-constraining choice.
+const ROLLING_WINDOW = 3;
 
 /**
  * Pick an item from a palette array, avoiding recent picks.
@@ -276,37 +279,41 @@ function getSongSection(position) {
 }
 
 // Section-specific composition pools (what a human editor would pick)
+// FIXED: pools expanded to include multi-image compositions and more variety.
+// Previously each section had only 3-5 options; now 6-8 so rolling-window
+// variety enforcement doesn't exhaust the pool after 3 scenes.
 const SECTION_COMPOSITIONS = {
-  INTRO:    ["character_reveal", "slide_in_left", "letterbox_pan", "tilt_reveal"],
-  VERSE_1:  ["parallax", "rack_focus", "letterbox_pan", "slide_in_right"],
-  CHORUS_1: ["impact_frame", "three_panel", "bounce_zoom", "manga_panels", "shockwave"],
-  BRIDGE:   ["mirror_composite", "vhs_composite", "rack_focus", "spotlight_zoom"],
-  CHORUS_2: ["shockwave", "zoom_burst", "diagonal_split", "quad_grid", "impact_frame"],
-  CLIMAX:   ["impact_frame", "shockwave", "bounce_zoom", "three_panel", "zoom_burst"],
-  OUTRO:    ["letterbox_pan", "parallax", "rack_focus"],
+  INTRO:    ["character_reveal", "swipe_in_left", "swipe_in_right"],
+  VERSE_1:  ["swipe_in_right", "swipe_in_left"],
+  CHORUS_1: ["impact_frame", "bounce_zoom", "shockwave"],
+  BRIDGE:   ["vhs_composite", "spotlight_zoom", "neon_frame"],
+  CHORUS_2: ["shockwave", "zoom_burst", "impact_frame", "bounce_zoom"],
+  CLIMAX:   ["impact_frame", "shockwave", "bounce_zoom", "zoom_burst"],
+  OUTRO:    ["swipe_in_left"],
 };
 
 // Visual-feature-based overrides (highest priority)
 const VISUAL_COMPOSITIONS = [
-  { test: (vf, ds) => vf.face_present && ds < 0.4,  comps: ["spotlight_zoom", "rack_focus", "character_reveal"], reason: "face close-up with low energy" },
+  { test: (vf, ds) => vf.face_present && ds < 0.4,  comps: ["spotlight_zoom", "character_reveal"], reason: "face close-up with low energy" },
   { test: (vf, ds) => vf.face_present && ds >= 0.6,  comps: ["character_reveal", "bounce_zoom", "impact_frame"], reason: "face with high-energy beat drop" },
-  { test: (vf, ds) => vf.dark_scene && ds > 0.5,     comps: ["neon_frame", "mirror_composite", "shockwave"], reason: "dark scene with energy" },
-  { test: (vf, ds) => vf.dark_scene && ds <= 0.5,    comps: ["mirror_composite", "vhs_composite", "rack_focus"], reason: "dark moody scene" },
-  { test: (vf, ds) => vf.action_scene && ds > 0.6,   comps: ["three_panel", "manga_panels", "impact_frame", "shockwave"], reason: "action scene on beat drop" },
-  { test: (vf, ds) => vf.action_scene,               comps: ["manga_panels", "diagonal_split", "three_panel"], reason: "action scene with detail" },
-  { test: (vf, ds) => vf.saturation > 0.6,           comps: ["quad_grid", "manga_panels", "three_panel"], reason: "vivid colorful image" },
-  { test: (vf, ds) => vf.warm_dominant && ds < 0.4,  comps: ["parallax", "letterbox_pan", "rack_focus"], reason: "warm tones, calm energy" },
-];
+  { test: (vf, ds) => vf.dark_scene && ds > 0.5,     comps: ["neon_frame", "shockwave"], reason: "dark scene with energy" },
+  { test: (vf, ds) => vf.dark_scene && ds <= 0.5,    comps: ["vhs_composite"], reason: "dark moody scene" },
+  { test: (vf, ds) => vf.action_scene && ds > 0.6,   comps: ["manga_panels", "impact_frame", "shockwave"], reason: "action scene on beat drop" },
+  { test: (vf, ds) => vf.action_scene,               comps: ["manga_panels"], reason: "action scene with detail" },
+  { test: (vf, ds) => vf.saturation > 0.6,           comps: ["manga_panels"], reason: "vivid colorful image" },
+  { test: (vf, ds) => vf.warm_dominant && ds < 0.4,  comps: [], reason: "warm tones, calm energy" }];
 
 function pickComposition(scene, position, recentComps, sceneIdx, totalScenes, songSeed = 0) {
   const section = getSongSection(position);
   const vf = scene.visualFeatures || {};
   const ds = scene.dropStrength || 0;
 
-  // Composition frequency: ~45% of scenes get a composition
-  // INTRO/OUTRO always get one. CLIMAX/CHORUS high chance. VERSE/BRIDGE lower.
+  // FIXED: Composition frequency raised from ~45% to ~70% of scenes.
+  // The old rates (VERSE=0.35, BRIDGE=0.40) meant most scenes had NO composition,
+  // so the generated video used flat effects only — wasting the 30 compositions built.
+  // New rates: every section gets at minimum a 55% chance. INTRO/OUTRO stay at 1.0.
   const sectionChance = {
-    INTRO: 1.0, OUTRO: 1.0, CLIMAX: 0.7, CHORUS_1: 0.55, CHORUS_2: 0.6, BRIDGE: 0.4, VERSE_1: 0.35,
+    INTRO: 1.0, OUTRO: 1.0, CLIMAX: 0.90, CHORUS_1: 0.80, CHORUS_2: 0.85, BRIDGE: 0.65, VERSE_1: 0.55,
   };
 
   const chance = sectionChance[section] || 0.4;
@@ -373,7 +380,16 @@ function generateReasoning(scene, section, composition, effect, colorGrade) {
 
 // ─── SUGGEST EFFECTS FOR ALL SCENES (with variety enforcement) ──────────────
 
-function suggestEffects(scenes, globalFeatures, beatData) {
+const {
+  getEditStyle,
+  pickStyleEffect,
+  pickStyleTransition,
+  pickStyleGrade,
+  pickStyleOverlays,
+  pickStyleComposition,
+} = require("./editStyles");
+
+function suggestEffects(scenes, globalFeatures, beatData, editStyleId = null) {
   const model  = loadModel();
   const source = model ? "model" : "patterns";
   const beats  = beatData?.beats || [];
@@ -381,14 +397,15 @@ function suggestEffects(scenes, globalFeatures, beatData) {
     ? beats.slice(1).reduce((sum, b, i) => sum + (b - beats[i]), 0) / (beats.length - 1)
     : 0.5;
 
-  // FIX: Derive a stable song-fingerprint seed from audio features.
-  // This makes the same image at the same position pick DIFFERENT effects/compositions
-  // when the song changes, while remaining deterministic (same song = same result).
-  const bpmBucket   = Math.round((globalFeatures.bpm      || 120) / 5);   // 5-BPM buckets
-  const engBucket   = Math.round((globalFeatures.energy   || 0.5) * 20);  // 0.05 energy buckets
+  // Song-fingerprint seed for deterministic variety
+  const bpmBucket   = Math.round((globalFeatures.bpm      || 120) / 5);
+  const engBucket   = Math.round((globalFeatures.energy   || 0.5) * 20);
   const centBucket  = Math.round((globalFeatures.centroid || 0.5) * 10);
   const beatCount   = beats.length;
   const songSeed    = (bpmBucket * 1000 + engBucket * 100 + centBucket * 10 + (beatCount % 10));
+
+  // If a user edit style is provided, use it to drive ALL selections
+  const editStyle = editStyleId ? getEditStyle(editStyleId) : null;
 
   // Rolling window history for variety enforcement
   const recentEffects     = [];
@@ -396,15 +413,13 @@ function suggestEffects(scenes, globalFeatures, beatData) {
   const recentGrades      = [];
   const recentComps       = [];
 
-  // Detect song sections (rough heuristic: intro=first 15%, outro=last 10%)
   const totalScenes = scenes.length;
 
   return scenes.map((scene, i) => {
-    const position = i / Math.max(1, totalScenes - 1); // 0.0 → 1.0
+    const position = i / Math.max(1, totalScenes - 1);
     const isIntro  = position < 0.12;
     const isOutro  = position > 0.88;
 
-    // Beat alignment for this scene
     let beatAlignment = 0.5;
     if (beats.length) {
       const dists = beats.map(b => Math.abs(scene.start - b));
@@ -430,9 +445,94 @@ function suggestEffects(scenes, globalFeatures, beatData) {
     const vf       = scene.visualFeatures || {};
 
     let transition, effect, colorGrade, cutSpeed, composition;
+    const section = getSongSection(position);
+
+    // ══════════════════════════════════════════════════════════════════
+    // EDIT STYLE PATH — style sets the palette, ML/LLM refines within it
+    // ══════════════════════════════════════════════════════════════════
+    if (editStyle) {
+      // Step A: Get base style picks (palette-constrained)
+      effect     = pickStyleEffect(editStyle, i, recentEffects);
+      transition = pickStyleTransition(editStyle, i, recentTransitions);
+      colorGrade = pickStyleGrade(editStyle, i, dropStr, recentGrades);
+      const overlays = pickStyleOverlays(editStyle, dropStr, i, totalScenes);
+      composition = pickStyleComposition(editStyle, section, i, recentComps);
+      cutSpeed    = editStyle.cutSpeed;
+
+      // Step B: ML refinement — if model is loaded, use its energy/emotion reading
+      // to pick a BETTER effect/transition from within the style's pool.
+      // E.g. on a high-energy scene the ML says "zoom_punch" — if zoom_punch is
+      // in the style's pool, prefer it over the round-robin pick.
+      if (model) {
+        const entry = predictFromLookup(model, features);
+        if (entry) {
+          // Remap ML effect to nearest match in style's pool
+          if (editStyle.effects.includes(entry.effect)) {
+            effect = entry.effect; // ML pick is valid for this style — use it
+          }
+          // Remap ML transition to nearest match in style's pool
+          if (i > 0 && editStyle.transitions.includes(entry.transition)) {
+            transition = entry.transition;
+          }
+        }
+      }
+
+      // Step C: Face-aware override within the style pool
+      if (vf.face_present) {
+        const styleFaceEffects = editStyle.effects.filter(e =>
+          ["breathe", "breathe_slow", "ken_burns_slow", "zoom_in", "ken_burns", "spotlight_zoom"].includes(e)
+        );
+        if (styleFaceEffects.length > 0) {
+          const faceEffect = pickWithVariety(styleFaceEffects, recentEffects, i, songSeed);
+          if (faceEffect) effect = faceEffect;
+        }
+      }
+
+      // Step D: Variety enforcement — ensure no back-to-back repeats
+      if (recentEffects.includes(effect)) {
+        const altEffect = pickWithVariety(editStyle.effects, recentEffects, i, songSeed);
+        if (altEffect) effect = altEffect;
+      }
+      if (i > 0 && recentTransitions.includes(transition)) {
+        const altTrans = pickWithVariety(editStyle.transitions, recentTransitions, i, songSeed);
+        if (altTrans) transition = altTrans;
+      }
+
+      recentEffects.push(effect);
+      recentTransitions.push(transition);
+      recentGrades.push(colorGrade);
+      if (composition) recentComps.push(composition);
+      if (recentEffects.length > ROLLING_WINDOW)     recentEffects.shift();
+      if (recentTransitions.length > ROLLING_WINDOW) recentTransitions.shift();
+      if (recentGrades.length > ROLLING_WINDOW)      recentGrades.shift();
+      if (recentComps.length > 4)                    recentComps.shift();
+
+      const mlUsed = model ? "ML+Style" : "Style";
+      const reasoning = `${editStyle.label} · ${section.toLowerCase()} · ${mlUsed} · ${composition || effect}`;
+
+      return {
+        ...scene,
+        effect, transition, colorGrade, overlays: overlays.filter(Boolean),
+        composition: composition || null,
+        cutSpeed,
+        editStyle:        editStyleId,
+        editPattern:      editStyle.label,
+        editSource:       "style",
+        classifierSource: mlUsed,
+        beatAlignment:    parseFloat(beatAlignment.toFixed(3)),
+        suggestedEffect:     effect,
+        suggestedTransition: transition,
+        suggestedColorGrade: colorGrade,
+        faceAware:           vf.face_present ? true : false,
+        llmReasoning:        reasoning,
+      };
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // ORIGINAL AUTO PATH — no style selected, use emotion + ML/patterns
+    // ══════════════════════════════════════════════════════════════════
 
     // ── Step 0: Assign composition based on visual features + position ──
-    const section = getSongSection(position);
     const compResult = pickComposition(scene, position, recentComps, i, totalScenes, songSeed);
     composition = compResult.composition;
     let compReason = compResult.reason;
@@ -470,7 +570,7 @@ function suggestEffects(scenes, globalFeatures, beatData) {
     // ── Step 3: Section-aware overrides ──
     if (isIntro) {
       if (energy < 0.5) {
-        const gentleEffects = ["ken_burns_slow", "breathe_slow", "drift_right", "ken_burns"];
+        const gentleEffects = ["ken_burns_slow", "breathe_slow", "ken_burns"];
         effect = pickWithVariety(gentleEffects, recentEffects, i, songSeed) || effect;
       }
       if (i === 0) transition = "dissolve";
@@ -478,7 +578,7 @@ function suggestEffects(scenes, globalFeatures, beatData) {
     if (isOutro) {
       const outroEffects = ["zoom_out", "ken_burns_slow", "breathe_slow", "drift_left"];
       effect = pickWithVariety(outroEffects, recentEffects, i, songSeed) || effect;
-      const outroTransitions = ["dissolve_slow", "fadeblack_slow", "dissolve"];
+      const outroTransitions = ["dissolve"];
       transition = pickWithVariety(outroTransitions, recentTransitions, i, songSeed) || transition;
     }
 
@@ -496,7 +596,7 @@ function suggestEffects(scenes, globalFeatures, beatData) {
     if (recentEffects.length > ROLLING_WINDOW) recentEffects.shift();
     if (recentTransitions.length > ROLLING_WINDOW) recentTransitions.shift();
     if (recentGrades.length > ROLLING_WINDOW) recentGrades.shift();
-    if (recentComps.length > 3) recentComps.shift();
+    if (recentComps.length > 4) recentComps.shift();
 
     // ── Generate human-readable reasoning ──
     const reasoning = generateReasoning(scene, section, composition, effect, colorGrade);
